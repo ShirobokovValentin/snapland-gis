@@ -2,6 +2,7 @@ package com.snapland.gis.common.web;
 
 import com.snapland.gis.common.exception.AreaDeletedException;
 import com.snapland.gis.common.exception.AreaNotFoundException;
+import com.snapland.gis.common.exception.AreaVersionNotFoundException;
 import com.snapland.gis.common.exception.InvalidGeometryException;
 import com.snapland.gis.common.exception.VersionConflictException;
 import com.snapland.gis.common.exception.WorkspaceNotFoundException;
@@ -11,6 +12,7 @@ import org.springframework.context.support.DefaultMessageSourceResolvable;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
+import org.springframework.web.bind.MissingServletRequestParameterException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
 
@@ -51,6 +53,12 @@ public class GlobalExceptionHandler {
                 .body(ApiError.withDetails("VERSION_CONFLICT", ex.getMessage(), details, traceId()));
     }
 
+    @ExceptionHandler(AreaVersionNotFoundException.class)
+    public ResponseEntity<ApiError> handleAreaVersionNotFound(AreaVersionNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiError.of("AREA_VERSION_NOT_FOUND", ex.getMessage(), traceId()));
+    }
+
     @ExceptionHandler(InvalidGeometryException.class)
     public ResponseEntity<ApiError> handleInvalidGeometry(InvalidGeometryException ex) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
@@ -65,6 +73,12 @@ public class GlobalExceptionHandler {
                 .orElse("Invalid request.");
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(ApiError.of("INVALID_REQUEST", message, traceId()));
+    }
+
+    @ExceptionHandler(MissingServletRequestParameterException.class)
+    public ResponseEntity<ApiError> handleMissingServletRequestParameter(MissingServletRequestParameterException ex) {
+        return ResponseEntity.status(HttpStatus.BAD_REQUEST)
+                .body(ApiError.of("INVALID_REQUEST", ex.getMessage(), traceId()));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)

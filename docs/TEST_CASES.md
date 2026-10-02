@@ -15,13 +15,15 @@ observed through its HTTP API and browser UI.
 - Area creation via REST API
 - Viewport-based Area retrieval via REST API
 - Area update via REST API with optimistic concurrency control
+- Area deletion via REST API with optimistic concurrency control
+- Area restore from historical version via REST API
 - Map rendering and polygon drawing in the browser
 - Area editing in the browser (rename and reshape)
+- Area deletion and immediate restore in the browser
 - Area persistence and reload
 
 **Explicitly out of scope (not yet implemented):**
 - Authentication and authorization
-- Area delete and restore
 - Version history API
 - WebSocket / real-time collaboration
 - Redis and presence
@@ -939,6 +941,474 @@ test data):
 
 ---
 
+### 4.4 Area Delete
+
+---
+
+### TC-DELETE-001 — Successful delete returns 200 with DELETED status and incremented version
+
+**Type:** API
+**Priority:** Critical
+
+**Preconditions:**
+- Backend is running.
+- Dev Workspace exists.
+- An Active Area at version 1 exists. Note its `id`.
+
+**Steps:**
+1. Send a `DELETE` request with `expectedVersion=1`.
+
+**Request:**
+- Method: `DELETE`
+- Path: `/workspaces/00000000-0000-0000-0000-000000000002/areas/{id}?expectedVersion=1`
+
+**Expected Result:**
+- HTTP `200 OK`.
+- Response body contains:
+
+| Field | Expected value |
+|-------|---------------|
+| `id` | Same UUID as the created Area |
+| `workspaceId` | `"00000000-0000-0000-0000-000000000002"` |
+| `status` | `"DELETED"` |
+| `currentVersion` | `2` |
+
+---
+
+### TC-DELETE-002 — AreaVersion snapshot is persisted with DELETED change type and original fields
+
+**Type:** API
+**Priority:** High
+
+**Preconditions:**
+- Active Area at version 1, created with the Reference Polygon and name `"Test"`.
+
+**Steps:**
+1. `DELETE` with `expectedVersion=1`.
+2. Verify the persisted `area_version` record (direct database inspection in automated
+   tests).
+
+**Expected Result:**
+- A new `area_version` row exists with all of:
+
+| Field | Expected value |
+|-------|---------------|
+| `version` | `2` |
+| `change_type` | `DELETED` |
+| `status` | `DELETED` |
+| `name` | `"Test"` (unchanged from the Area before deletion) |
+| `geometry` | Matches the Reference Polygon (unchanged) |
+| `area_km2` | Positive decimal matching the original area (unchanged) |
+
+---
+
+### TC-DELETE-003 — Missing expectedVersion returns 400 INVALID_REQUEST
+
+**Type:** API
+**Priority:** High
+
+**Preconditions:**
+- Backend is running.
+- Dev Workspace exists.
+- An Active Area exists.
+
+**Steps:**
+1. `DELETE` without the `expectedVersion` query parameter.
+
+**Request:**
+- Method: `DELETE`
+- Path: `/workspaces/00000000-0000-0000-0000-000000000002/areas/{id}` (no query parameter)
+
+**Expected Result:**
+- HTTP `400 Bad Request`.
+- Response body `code` = `"INVALID_REQUEST"`.
+- Area is not modified.
+
+---
+
+### TC-DELETE-004 — Stale expectedVersion returns 409 VERSION_CONFLICT with structured details
+
+**Type:** API
+**Priority:** Critical
+
+**Preconditions:**
+- Active Area at version 2 (one update already applied).
+
+**Steps:**
+1. `DELETE` with `expectedVersion=1` (stale).
+
+**Request:**
+- Method: `DELETE`
+- Path: `/workspaces/00000000-0000-0000-0000-000000000002/areas/{id}?expectedVersion=1`
+
+**Expected Result:**
+- HTTP `409 Conflict`.
+- Response body `code` = `"VERSION_CONFLICT"`.
+- Response body `details` object contains:
+
+| Field | Expected value |
+|-------|---------------|
+| `areaId` | UUID of the Area |
+| `expectedVersion` | `1` |
+| `currentVersion` | `2` |
+
+- Area is not modified.
+
+---
+
+### TC-DELETE-005 — Deleting an already-DELETED Area returns 409 AREA_DELETED
+
+**Type:** API
+**Priority:** High
+
+**Preconditions:**
+- Area has already been deleted. Its `status = DELETED` and `currentVersion = N`.
+
+**Steps:**
+1. `DELETE` with `expectedVersion=N` (matching the current post-deletion version).
+
+**Request:**
+- Method: `DELETE`
+- Path: `/workspaces/00000000-0000-0000-0000-000000000002/areas/{id}?expectedVersion={N}`
+
+**Expected Result:**
+- HTTP `409 Conflict`.
+- Response body `code` = `"AREA_DELETED"`.
+
+**Note:** This case is semantically distinct from VERSION_CONFLICT: the version
+matches the current version, but the operation is rejected because the Area is
+already in the DELETED state.
+
+---
+
+### TC-DELETE-006 — Concurrent deletes: exactly one succeeds, other receives VERSION_CONFLICT
+
+**Type:** API
+**Priority:** High
+
+**Preconditions:**
+- Active Area at version 1.
+
+**Steps:**
+1. Send two concurrent `DELETE` requests, both with `expectedVersion=1`.
+
+**Expected Result:**
+- Exactly one response is `200 OK`.
+- Exactly one response is `409 Conflict` with `code = "VERSION_CONFLICT"` (not
+  `"AREA_DELETED"`).
+- Final `currentVersion` of the Area is `2`.
+
+**Note:** The concurrent loser observes `currentVersion = 2` after the winner
+completes, which does not match `expectedVersion = 1`, triggering
+VERSION_CONFLICT before the DELETED status check is reached.
+
+---
+
+### TC-DELETE-007 — Unknown areaId returns 404 AREA_NOT_FOUND
+
+**Type:** API
+**Priority:** High
+
+**Preconditions:**
+- Backend is running.
+- Dev Workspace exists.
+
+**Steps:**
+1. `DELETE` using a random UUID that has not been created.
+
+**Request:**
+- Method: `DELETE`
+- Path: `/workspaces/00000000-0000-0000-0000-000000000002/areas/{randomUuid}?expectedVersion=1`
+
+**Expected Result:**
+- HTTP `404 Not Found`.
+- Response body `code` = `"AREA_NOT_FOUND"`.
+
+---
+
+### TC-DELETE-008 — Area belonging to a different workspace returns 404 AREA_NOT_FOUND
+
+**Type:** API
+**Priority:** Critical
+
+**Preconditions:**
+- Area X exists in Workspace A (`00000000-0000-0000-0000-000000000002`).
+- Workspace B exists with a distinct ID.
+
+**Steps:**
+1. `DELETE` `/workspaces/{workspaceBId}/areas/{areaXId}?expectedVersion=1`.
+
+**Expected Result:**
+- HTTP `404 Not Found`.
+- Response body `code` = `"AREA_NOT_FOUND"`.
+- Area X is **not** modified.
+- The existence and version of Area X are not leaked in the response.
+
+---
+
+### TC-DELETE-009 — Unknown workspace returns 404 WORKSPACE_NOT_FOUND
+
+**Type:** API
+**Priority:** High
+
+**Preconditions:**
+- Backend is running.
+- The target workspace ID does not exist.
+
+**Steps:**
+1. `DELETE` using a random workspace ID.
+
+**Request:**
+- Method: `DELETE`
+- Path: `/workspaces/00000000-0000-0000-0000-000000000099/areas/{randomUuid}?expectedVersion=1`
+
+**Expected Result:**
+- HTTP `404 Not Found`.
+- Response body `code` = `"WORKSPACE_NOT_FOUND"`.
+
+---
+
+### TC-DELETE-010 — Deleted Area is excluded from viewport query
+
+**Type:** API
+**Priority:** Critical
+
+**Preconditions:**
+- Backend is running.
+- Dev Workspace exists.
+- Active Area exists using the Reference Polygon.
+
+**Steps:**
+1. `DELETE` the Area with the correct `expectedVersion`.
+2. `GET` with a bbox that fully encloses the Reference Polygon.
+
+**Request (step 2):**
+- Method: `GET`
+- Path: `/workspaces/00000000-0000-0000-0000-000000000002/areas?bbox=35.49,32.69,35.56,32.76`
+
+**Expected Result:**
+- `DELETE` returns `200 OK`.
+- `GET` returns `200 OK` with an empty array: the deleted Area does not appear.
+
+---
+
+### 4.5 Area Restore
+
+---
+
+### TC-RESTORE-001 — Successful restore returns 200 with ACTIVE status and incremented version
+
+**Type:** API
+**Priority:** Critical
+
+**Preconditions:**
+- Area exists at version 2. Status is `DELETED` (Area was created then deleted).
+- Version 1 exists in the AreaVersion history.
+
+**Steps:**
+1. Send `POST .../areas/{id}/versions/1/restore` with `{ "expectedVersion": 2 }`.
+
+**Request:**
+- Method: `POST`
+- Path: `/workspaces/00000000-0000-0000-0000-000000000002/areas/{id}/versions/1/restore`
+- Body: `{ "expectedVersion": 2 }`
+
+**Expected Result:**
+- HTTP `200 OK`.
+- Response body contains:
+
+| Field | Expected value |
+|-------|---------------|
+| `id` | Same UUID as the Area |
+| `status` | `"ACTIVE"` |
+| `currentVersion` | `3` |
+
+---
+
+### TC-RESTORE-002 — AreaVersion snapshot is persisted with RESTORED change type and restored fields
+
+**Type:** API
+**Priority:** High
+
+**Preconditions:**
+- Area at version 2 (`DELETED`). Version 1 had name `"Original"` and the Reference Polygon.
+
+**Steps:**
+1. Restore version 1 with `expectedVersion=2`.
+2. Verify the persisted `area_version` record (direct database inspection in automated tests).
+
+**Expected Result:**
+- A new `area_version` row exists with all of:
+
+| Field | Expected value |
+|-------|---------------|
+| `version` | `3` |
+| `change_type` | `RESTORED` |
+| `status` | `ACTIVE` |
+| `name` | `"Original"` (from version 1) |
+| `geometry` | Matches the Reference Polygon (from version 1) |
+| `area_km2` | Positive decimal matching the Reference Polygon area (from version 1) |
+
+---
+
+### TC-RESTORE-003 — Restore copies name, geometry, and area_km2 from the target version
+
+**Type:** API
+**Priority:** Critical
+
+**Preconditions:**
+- Area at version 1 with name `"Original"` and Reference Polygon.
+- Area updated to version 2 with name `"Modified"` and Alternate Reference Polygon.
+
+**Steps:**
+1. Restore version 1 with `expectedVersion=2`.
+
+**Expected Result:**
+- HTTP `200 OK`.
+- Response body `name` = `"Original"`.
+- Response body `areaKm2` reflects the Reference Polygon area (not the Alternate).
+- Response body `currentVersion` = `3`.
+- Response body `status` = `"ACTIVE"`.
+
+---
+
+### TC-RESTORE-004 — Restore increments version monotonically; existing AreaVersions are unchanged
+
+**Type:** API
+**Priority:** High
+
+**Preconditions:**
+- Area exists with versions 1 through N.
+
+**Steps:**
+1. Restore version 1 with `expectedVersion=N`.
+2. Verify AreaVersion records (direct database inspection in automated tests).
+
+**Expected Result:**
+- A new version N+1 exists with `change_type = RESTORED`.
+- Versions 1 through N are unchanged (verified by count and individual record checks).
+- `currentVersion` of the Area = N+1.
+
+---
+
+### TC-RESTORE-005 — Stale expectedVersion returns 409 VERSION_CONFLICT
+
+**Type:** API
+**Priority:** Critical
+
+**Preconditions:**
+- Active Area at version 2.
+
+**Steps:**
+1. `POST .../versions/1/restore` with `{ "expectedVersion": 99 }`.
+
+**Expected Result:**
+- HTTP `409 Conflict`.
+- Response body `code` = `"VERSION_CONFLICT"`.
+- Area is unchanged.
+
+---
+
+### TC-RESTORE-006 — Unknown target version returns 404 AREA_VERSION_NOT_FOUND
+
+**Type:** API
+**Priority:** High
+
+**Preconditions:**
+- Area exists at version 1.
+
+**Steps:**
+1. `POST .../versions/999/restore` with `{ "expectedVersion": 1 }`.
+
+**Request:**
+- Method: `POST`
+- Path: `/workspaces/00000000-0000-0000-0000-000000000002/areas/{id}/versions/999/restore`
+- Body: `{ "expectedVersion": 1 }`
+
+**Expected Result:**
+- HTTP `404 Not Found`.
+- Response body `code` = `"AREA_VERSION_NOT_FOUND"`.
+
+---
+
+### TC-RESTORE-007 — Unknown areaId returns 404 AREA_VERSION_NOT_FOUND
+
+**Type:** API
+**Priority:** High
+
+**Preconditions:**
+- Backend is running.
+- Dev Workspace exists.
+- The target area ID does not exist.
+
+**Steps:**
+1. `POST .../areas/{randomUuid}/versions/1/restore` with `{ "expectedVersion": 1 }`.
+
+**Request:**
+- Method: `POST`
+- Path: `/workspaces/00000000-0000-0000-0000-000000000002/areas/{randomUuid}/versions/1/restore`
+- Body: `{ "expectedVersion": 1 }`
+
+**Expected Result:**
+- HTTP `404 Not Found`.
+- Response body `code` = `"AREA_VERSION_NOT_FOUND"`.
+
+**Note:** The server looks up the AreaVersion by `(area_id, version)` before checking the
+Area itself. When the area does not exist, no AreaVersion is found, so the response
+code is `AREA_VERSION_NOT_FOUND` rather than `AREA_NOT_FOUND`.
+
+---
+
+### TC-RESTORE-008 — Restore a historical version of an ACTIVE Area
+
+**Type:** API
+**Priority:** Critical
+
+**Preconditions:**
+- Area v1 contains the original snapshot.
+- Area is updated to v2 with a different name and geometry.
+- Area remains `ACTIVE`.
+- `currentVersion = 2`.
+
+**Steps:**
+1. Send `POST .../areas/{areaId}/versions/1/restore` with `{ "expectedVersion": 2 }`.
+
+**Request:**
+- Method: `POST`
+- Path: `/workspaces/00000000-0000-0000-0000-000000000002/areas/{id}/versions/1/restore`
+- Body: `{ "expectedVersion": 2 }`
+
+**Expected Result:**
+- HTTP `200 OK`.
+- Response body `status` = `"ACTIVE"`.
+- Response body `currentVersion` = `3`.
+- Response body `name`, `geometry`, and `areaKm2` correspond to the v1 snapshot.
+- A new `area_version` v3 exists with `change_type = RESTORED`.
+- Existing v1 and v2 remain unchanged.
+
+**Note:** This case verifies that Restore is not limited to undeleting Areas.
+Restore explicitly supports reverting an ACTIVE Area to any historical snapshot.
+
+---
+
+### TC-RESTORE-009 — Null expectedVersion returns 400 INVALID_REQUEST
+
+**Type:** API
+**Priority:** High
+
+**Preconditions:**
+- Area at version 1 exists.
+
+**Steps:**
+1. `POST .../versions/1/restore` with `{ "expectedVersion": null }`.
+
+**Expected Result:**
+- HTTP `400 Bad Request`.
+- Response body `code` = `"INVALID_REQUEST"`.
+- Area is not modified.
+
+---
+
 ## 5. UI End-to-End Tests
 
 ### Shared UI Preconditions
@@ -1154,6 +1624,73 @@ Unless stated otherwise:
 
 ---
 
+### TC-UI-DELETE-001 — Delete an Area via the Edit panel and confirm removal from the map
+
+**Type:** UI
+**Priority:** Critical
+
+**Preconditions:**
+- Application is open and map is interactive.
+- At least one persisted Active Area is visible on the map.
+
+**Steps:**
+1. Click the Area polygon on the map. A popup appears showing the Area name and size.
+2. Click the "Edit" button in the popup.
+3. Observe the edit panel.
+4. Click the "Delete" button.
+5. Observe the map and panel.
+
+**Expected Result:**
+- The edit panel is dismissed.
+- The Area polygon is replaced by a grayed-out polygon at the same location,
+  indicating the Area has been deleted.
+- An "Area Deleted" panel appears in the top-right corner showing the deleted
+  Area's name and a "Restore" button.
+- The Area is no longer returned by a viewport query (`status = DELETED`).
+
+---
+
+### TC-UI-DELETE-002 — Deleted Area can be immediately restored via the Restore panel
+
+**Type:** UI
+**Priority:** Critical
+
+**Preconditions:**
+- TC-UI-DELETE-001 has completed. The "Area Deleted" panel is visible.
+- The grayed-out polygon is on the map.
+
+**Steps:**
+1. Click the "Restore" button in the "Area Deleted" panel.
+2. Observe the map and panel.
+
+**Expected Result:**
+- The "Area Deleted" panel is dismissed.
+- The grayed-out polygon is removed.
+- The Area reappears as an active polygon (standard appearance) at the same location.
+- The Area is returned by a subsequent viewport query with `status = "ACTIVE"`.
+
+---
+
+### TC-UI-DELETE-003 — Dismissing the Restore panel removes the deleted indicator from the map
+
+**Type:** UI
+**Priority:** High
+
+**Preconditions:**
+- TC-UI-DELETE-001 has completed. The "Area Deleted" panel is visible.
+
+**Steps:**
+1. Click the "Dismiss" button in the "Area Deleted" panel.
+2. Observe the map and panel.
+
+**Expected Result:**
+- The "Area Deleted" panel is dismissed.
+- The grayed-out polygon is removed from the map.
+- The Area remains DELETED. It does not reappear on map reload within its
+  former viewport.
+
+---
+
 ## 6. Discrepancies and Observations
 
 The following items describe gaps between the current prototype and the
@@ -1184,12 +1721,10 @@ sees the current area." The prototype displays the area only after the
 polygon is completed (TC-UI-002 step 5). This is a known prototype
 limitation; live preview during vertex placement is not yet implemented.
 
-**Discrepancy 4 — Deleted Area exclusion from viewport cannot be black-box
-tested.**
-The design requires that `DELETED` Areas are excluded from viewport query
-results. The prototype enforces this at the data level, but no `DELETE`
-endpoint is implemented. A black-box API test for this behaviour is deferred
-until the delete operation is available.
+**Discrepancy 4 — Deleted Area exclusion from viewport (resolved).**
+The `DELETE` endpoint is now implemented. TC-DELETE-010 provides black-box API
+coverage: after deletion, a `GET` with a bbox covering the Area's location
+returns an empty array.
 
 **Discrepancy 5 — TC-VP-004 workspace isolation requires a second
 workspace.**
@@ -1223,6 +1758,10 @@ an unclosed ring returns `400 INVALID_GEOMETRY`.
 | 7 | TC-UI-003 | Area visible after browser refresh — end-to-end persistence |
 | 8 | TC-UI-UPDATE-001 | Full edit-and-save browser workflow |
 | 9 | TC-UI-UPDATE-002 | Edited Area visible after browser refresh |
+| 10 | TC-DELETE-001 | Delete golden path: validates status, version, response contract |
+| 11 | TC-DELETE-010 | Deleted Area excluded from viewport — spatial query regression |
+| 12 | TC-RESTORE-001 | Restore golden path: DELETED Area returns to ACTIVE |
+| 13 | TC-RESTORE-008 | Restore historical version of ACTIVE Area — validates full restore semantics |
 
 **Phase 2 — Validation and isolation**
 
@@ -1238,6 +1777,13 @@ an unclosed ring returns `400 INVALID_GEOMETRY`.
 | 17 | TC-UPDATE-010 | Invalid polygon on update rejected — database integrity |
 | 18 | TC-AREA-012 | Error response shape — API consumer contract |
 | 19 | TC-UI-UPDATE-003 | Stale edit informs user and reloads authoritative state |
+| 20 | TC-DELETE-004 | OCC on delete: VERSION_CONFLICT details — core concurrency contract |
+| 21 | TC-DELETE-005 | AREA_DELETED distinct from VERSION_CONFLICT — semantic correctness |
+| 22 | TC-DELETE-006 | Concurrent deletes: exactly one succeeds — OCC correctness |
+| 23 | TC-DELETE-008 | Cross-workspace delete returns 404 — workspace boundary must not leak data |
+| 24 | TC-RESTORE-003 | Restore copies correct snapshot — data integrity |
+| 25 | TC-UI-DELETE-001 | Delete via UI: basic delete workflow |
+| 26 | TC-UI-DELETE-002 | Immediate restore: undo-delete workflow |
 
 **Phase 3 — Remaining coverage**
 
@@ -1261,3 +1807,14 @@ an unclosed ring returns `400 INVALID_GEOMETRY`.
 | 35 | TC-UI-004 | Viewport loading on pan/zoom |
 | 36 | TC-UI-001 | Application opens and map is interactive |
 | 37 | TC-UI-005 | Save failure communicated to user |
+| 38 | TC-DELETE-002 | AreaVersion snapshot completeness on delete |
+| 39 | TC-DELETE-003 | Missing expectedVersion on delete returns 400 |
+| 40 | TC-DELETE-007 | 404 for unknown areaId on delete |
+| 41 | TC-DELETE-009 | 404 for unknown workspace on delete |
+| 42 | TC-RESTORE-002 | AreaVersion snapshot completeness on restore |
+| 43 | TC-RESTORE-004 | Version monotonicity on restore |
+| 44 | TC-RESTORE-005 | Stale expectedVersion on restore returns 409 |
+| 45 | TC-RESTORE-006 | Unknown target version returns 404 AREA_VERSION_NOT_FOUND |
+| 46 | TC-RESTORE-007 | Unknown areaId on restore returns 404 AREA_VERSION_NOT_FOUND |
+| 47 | TC-RESTORE-009 | Null expectedVersion on restore returns 400 |
+| 48 | TC-UI-DELETE-003 | Dismiss restore panel removes deleted indicator |

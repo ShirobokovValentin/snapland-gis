@@ -1,0 +1,593 @@
+We are starting Task 05 — Area Delete & Restore.
+
+Task 01 — Project Bootstrap: complete.
+Task 02 — Database Schema & Core Domain: complete.
+Task 03 — First Working GIS Vertical Slice: complete.
+Task 04 — Area Update & Versioning: complete.
+
+The current prototype supports:
+
+- Area creation
+- Area viewport queries
+- Area editing
+- authoritative PostGIS area calculation
+- AreaVersion snapshots
+- optimistic concurrency using atomic conditional UPDATE
+- VERSION_CONFLICT handling
+- frontend edit workflow
+- frontend stale-edit conflict handling
+- black-box QA specification in docs/TEST_CASES.md
+
+Authoritative documentation:
+
+- CLAUDE.md
+- docs/REQUIREMENTS.md
+- docs/DESIGN.md
+- docs/TEST_CASES.md
+
+Before doing anything:
+
+1. Read CLAUDE.md.
+2. Read the relevant Area delete, restore, status, versioning,
+   optimistic concurrency, API, transaction, and frontend sections
+   of REQUIREMENTS.md and DESIGN.md.
+3. Inspect the existing Task 03/04 Area implementation.
+4. Inspect Area and AreaVersion entities/schema.
+5. Inspect the conditional UPDATE implementation used by Task 04.
+6. Inspect existing integration tests.
+7. Inspect TEST_CASES.md to understand the regression baseline.
+
+Do NOT modify any files yet.
+
+Produce an implementation plan for review.
+
+---
+
+## Goal
+
+Complete the basic Area lifecycle by implementing soft delete and restore.
+
+After Task 05, the application should support:
+
+CREATE
+  -> CREATED
+
+UPDATE
+  -> UPDATED
+
+DELETE
+  -> DELETED
+
+RESTORE
+  -> RESTORED
+
+Every successful mutation must create a new immutable AreaVersion.
+
+Delete and restore must use the same optimistic concurrency principles
+implemented for Area Update.
+
+---
+
+## Delete Area
+
+Review DESIGN.md and use the exact documented endpoint and contract.
+
+Delete must be a SOFT DELETE.
+
+Do not physically delete:
+
+- Area
+- AreaVersion rows
+
+Conceptually:
+
+DELETE request
+    ↓
+Find Area in Workspace
+    ↓
+Compare expectedVersion
+    ↓
+Atomic conditional mutation
+    ↓
+status = DELETED
+currentVersion = currentVersion + 1
+    ↓
+Insert AreaVersion
+    changeType = DELETED
+    ↓
+COMMIT
+
+After deletion:
+
+- Area remains stored in PostgreSQL;
+- AreaVersion history remains stored;
+- Area.status = DELETED;
+- currentVersion is incremented;
+- normal viewport queries no longer return the Area.
+
+---
+
+## Delete OCC
+
+Delete must participate in optimistic concurrency.
+
+Example:
+
+Area:
+status = ACTIVE
+currentVersion = 4
+
+DELETE expectedVersion=4
+
+Expected:
+
+status = DELETED
+currentVersion = 5
+AreaVersion(version=5, changeType=DELETED)
+
+A stale request:
+
+DELETE expectedVersion=3
+
+must return:
+
+409 VERSION_CONFLICT
+
+Do not use:
+
+- SELECT FOR UPDATE;
+- PESSIMISTIC_WRITE;
+- @Version;
+- last-write-wins.
+
+Prefer the same atomic conditional mutation pattern already used by
+Area Update.
+
+Explain the exact conditional SQL/JPA operation in the plan.
+
+---
+
+## Restore Area
+
+Review DESIGN.md for the exact restore endpoint and semantics.
+
+Conceptually:
+
+Restore request
+    ↓
+Find DELETED Area in Workspace
+    ↓
+Compare expectedVersion
+    ↓
+Atomic conditional mutation
+    ↓
+status = ACTIVE
+currentVersion = currentVersion + 1
+    ↓
+Insert AreaVersion
+    changeType = RESTORED
+    ↓
+COMMIT
+
+Example:
+
+Area:
+status = DELETED
+currentVersion = 5
+
+RESTORE expectedVersion=5
+
+Expected:
+
+status = ACTIVE
+currentVersion = 6
+AreaVersion(version=6, changeType=RESTORED)
+
+After restore, the Area must again appear in normal viewport queries.
+
+---
+
+## Restore State
+
+Review DESIGN.md carefully to determine what state is restored.
+
+Do not invent restore semantics.
+
+Determine whether RESTORE means:
+
+- reactivating the current stored Area snapshot;
+
+or
+
+- reconstructing state from a previous AreaVersion.
+
+Use exactly the model defined by DESIGN.md.
+
+Explicitly explain this in the plan.
+
+Do not implement historical-version selection unless DESIGN.md requires it.
+
+---
+
+## AreaVersion Snapshots
+
+Every successful DELETE and RESTORE must append an AreaVersion.
+
+For DELETE:
+
+AreaVersion
+    version = previousVersion + 1
+    changeType = DELETED
+    name = current Area name
+    geometry = current Area geometry
+    areaKm2 = current Area area
+    changedBy = prototype development user
+
+For RESTORE:
+
+AreaVersion
+    version = previousVersion + 1
+    changeType = RESTORED
+    name = restored Area name
+    geometry = restored Area geometry
+    areaKm2 = restored Area area
+    changedBy = prototype development user
+
+Use exact existing field names from the repository.
+
+AreaVersion remains append-only.
+
+Do not mutate previous versions.
+
+---
+
+## State Transitions
+
+Review DESIGN.md and explicitly define the allowed state transitions.
+
+Expected lifecycle is likely:
+
+ACTIVE --DELETE--> DELETED
+DELETED --RESTORE--> ACTIVE
+
+Determine the documented behavior for invalid transitions such as:
+
+DELETE when already DELETED
+RESTORE when already ACTIVE
+
+Do not guess.
+
+If DESIGN.md does not define the exact HTTP/error semantics, report this
+as a decision requiring approval.
+
+Do not implement idempotent behavior unless explicitly required.
+
+---
+
+## Workspace Boundary
+
+Delete and restore must enforce the Workspace boundary.
+
+For an Area belonging to Workspace A:
+
+DELETE /workspaces/B/areas/{areaId}
+RESTORE /workspaces/B/areas/{areaId}/restore
+
+must not expose that the Area exists in another Workspace.
+
+Use the same boundary semantics established in Task 04.
+
+Do not implement user authorization yet.
+
+---
+
+## Error Handling
+
+Review the documented Error Contract.
+
+At minimum determine behavior for:
+
+DELETE:
+- Workspace not found
+- Area not found
+- Area in another Workspace
+- stale expectedVersion
+- Area already DELETED
+
+RESTORE:
+- Workspace not found
+- Area not found
+- Area in another Workspace
+- stale expectedVersion
+- Area already ACTIVE
+
+VERSION_CONFLICT should preserve the Task 04 structured details:
+
+- areaId
+- expectedVersion
+- currentVersion
+
+Reuse existing error infrastructure where appropriate.
+
+Do not introduce a new general exception hierarchy unless necessary.
+
+---
+
+## REST Contract
+
+Use the exact endpoint definitions from DESIGN.md.
+
+Determine:
+
+- how expectedVersion is supplied for DELETE;
+- request body, if any;
+- DELETE success HTTP status;
+- RESTORE method/path;
+- restore request DTO;
+- restore response DTO/status.
+
+Do not invent contracts when DESIGN.md already defines them.
+
+If REQUIREMENTS.md and DESIGN.md disagree, report the discrepancy.
+
+---
+
+## Frontend — Delete
+
+Extend the existing Area popup/edit UI minimally.
+
+A user should be able to delete an existing ACTIVE Area.
+
+Expected flow:
+
+Select Area
+    ↓
+Delete
+    ↓
+Confirm deletion
+    ↓
+send expectedVersion
+    ↓
+backend soft delete
+    ↓
+remove Area from visible map
+
+Use a simple confirmation mechanism appropriate for the current prototype.
+
+Do not spend time on UI polish.
+
+---
+
+## Frontend — Restore
+
+Review the current UI and DESIGN.md before proposing restore UX.
+
+Important:
+
+Normal viewport queries exclude DELETED Areas.
+
+Therefore, a deleted Area cannot simply be selected from the normal map
+after deletion.
+
+Propose the smallest useful prototype mechanism that makes Restore
+manually demonstrable without implementing a large history/deleted-items UI.
+
+Do not implement the mechanism until it is approved.
+
+Possible solutions must be evaluated against DESIGN.md.
+
+Do not introduce a full Area management screen solely for Restore.
+
+---
+
+## Frontend Conflict Handling
+
+DELETE and RESTORE can also conflict with another mutation.
+
+If the backend returns VERSION_CONFLICT:
+
+- do not silently retry;
+- do not overwrite newer state;
+- inform the user;
+- reload authoritative state where possible.
+
+Reuse the Task 04 conflict handling approach rather than creating an
+unrelated mechanism.
+
+---
+
+## Repository Layer
+
+Reuse the Task 04 atomic conditional mutation approach.
+
+Propose the minimum repository operations for:
+
+- conditional soft delete;
+- conditional restore.
+
+Do not load an Area, compare the version in Java, and then issue an
+unconditional UPDATE.
+
+The version/state condition must participate in the database mutation.
+
+---
+
+## Transactions
+
+Each successful mutation must be atomic.
+
+DELETE:
+
+BEGIN
+  conditional soft delete
+  insert DELETED AreaVersion
+COMMIT
+
+RESTORE:
+
+BEGIN
+  conditional restore
+  insert RESTORED AreaVersion
+COMMIT
+
+If AreaVersion persistence fails, the Area mutation must roll back.
+
+Do not split these operations across transactions.
+
+---
+
+## Integration Tests
+
+Add dedicated integration tests for Delete/Restore behavior.
+
+Do not add all tests to AreaApiIntegrationTest.
+
+Propose a dedicated class such as:
+
+AreaLifecycleIntegrationTest
+
+At minimum evaluate tests for:
+
+DELETE:
+1. successful soft delete;
+2. currentVersion increments;
+3. DELETED AreaVersion snapshot created;
+4. deleted Area disappears from viewport;
+5. stale delete returns VERSION_CONFLICT;
+6. stale delete does not mutate state;
+7. cross-workspace delete returns 404;
+8. nonexistent Area behavior;
+9. nonexistent Workspace behavior;
+10. repeated delete behavior according to DESIGN.md.
+
+RESTORE:
+11. successful restore;
+12. currentVersion increments;
+13. RESTORED AreaVersion snapshot created;
+14. restored Area appears in viewport again;
+15. stale restore returns VERSION_CONFLICT;
+16. stale restore does not mutate state;
+17. cross-workspace restore returns 404;
+18. nonexistent Area behavior;
+19. nonexistent Workspace behavior;
+20. restore of ACTIVE Area according to DESIGN.md.
+
+Also evaluate at least one real concurrent mutation scenario.
+
+For example:
+
+Area version N, ACTIVE.
+
+Two concurrent DELETE requests both use expectedVersion=N.
+
+Expected:
+- exactly one succeeds;
+- the other does not create another version;
+- final version = N+1;
+- exactly one DELETED AreaVersion N+1 exists.
+
+If DESIGN.md implies a more valuable DELETE-vs-UPDATE race, explain it.
+
+Use real PostgreSQL/PostGIS for concurrency behavior.
+
+Do not mock the concurrency mechanism.
+
+---
+
+## Regression
+
+Existing behavior must remain working:
+
+- Create Area
+- viewport query
+- Update Area
+- AreaVersion creation
+- VERSION_CONFLICT
+- workspace isolation
+- frontend create/edit flows
+
+Do not change existing contracts unnecessarily.
+
+---
+
+## QA Test Cases
+
+After implementation and verification, propose additions to:
+
+docs/TEST_CASES.md
+
+for externally observable Delete/Restore behavior.
+
+Do not modify TEST_CASES.md during planning.
+
+Keep cases compact.
+
+Do not create separate specification-level cases for every internal
+assertion.
+
+---
+
+## Explicitly Out of Scope
+
+Do NOT implement:
+
+- hard delete;
+- authentication;
+- authorization roles;
+- JWT;
+- OAuth;
+- Workspace management API;
+- Area history REST API unless DESIGN.md explicitly requires it for Restore;
+- restoring an arbitrary historical version unless DESIGN.md requires it;
+- WebSocket;
+- Redis Pub/Sub;
+- presence;
+- Transactional Outbox;
+- satellite mode;
+- caching;
+- rate limiting;
+- production deployment;
+- large deleted-items management UI.
+
+---
+
+## Required Planning Output
+
+Before modifying files, provide:
+
+1. Exact DELETE endpoint and contract from DESIGN.md.
+2. Exact RESTORE endpoint and contract from DESIGN.md.
+3. How expectedVersion is supplied for each operation.
+4. Allowed Area state transitions.
+5. Behavior for repeated DELETE.
+6. Behavior for RESTORE of ACTIVE Area.
+7. Exact restore semantics: what state is restored.
+8. OCC strategy for DELETE.
+9. OCC strategy for RESTORE.
+10. Transaction boundaries.
+11. AreaVersion behavior for DELETED and RESTORED.
+12. Workspace-boundary behavior.
+13. Error mappings.
+14. Proposed frontend Delete workflow.
+15. Proposed minimal frontend Restore workflow.
+16. Conflict handling.
+17. Repository changes.
+18. Backend files to create/modify.
+19. Frontend files to create/modify.
+20. Integration test plan.
+21. Concurrent mutation test strategy.
+22. Whether any Flyway migration is required.
+23. Whether any new dependencies are required.
+24. Proposed TEST_CASES.md additions after implementation.
+25. Any discrepancies or ambiguities in REQUIREMENTS.md / DESIGN.md.
+26. Decisions requiring approval.
+
+IMPORTANT:
+
+Do not create or modify any files yet.
+Do not stage files.
+Do not commit anything.
+Do not modify anything outside the repository.
+Do not install global packages or change machine configuration.
+
+Wait for explicit approval before implementation.

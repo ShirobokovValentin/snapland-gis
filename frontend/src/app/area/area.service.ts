@@ -37,6 +37,20 @@ export class AreaService {
     );
   }
 
+  deleteArea(areaId: string, expectedVersion: number): Observable<Area> {
+    return this.http.delete<Area>(
+      `${this.base}/workspaces/${this.workspaceId}/areas/${areaId}`,
+      { params: { expectedVersion: expectedVersion.toString() } },
+    );
+  }
+
+  restoreArea(areaId: string, targetVersion: number, expectedVersion: number): Observable<Area> {
+    return this.http.post<Area>(
+      `${this.base}/workspaces/${this.workspaceId}/areas/${areaId}/versions/${targetVersion}/restore`,
+      { expectedVersion },
+    );
+  }
+
   getAreas(bounds: L.LatLngBounds): Observable<Area[]> {
     const bbox = `${bounds.getWest()},${bounds.getSouth()},${bounds.getEast()},${bounds.getNorth()}`;
     return this.http.get<Area[]>(

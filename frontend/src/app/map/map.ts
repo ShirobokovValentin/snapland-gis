@@ -31,6 +31,11 @@ export class MapComponent implements AfterViewInit, OnDestroy {
   editName = '';
   editLayer: L.Polygon | null = null;
   editSaving = false;
+  deleteSaving = false;
+
+  deletedArea: Area | null = null;
+  restoreSaving = false;
+  private deletedLayer: L.Polygon | null = null;
 
   private map!: L.Map;
   private drawnItems!: L.FeatureGroup;
@@ -121,6 +126,77 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     this.clearEdit();
   }
 
+  deleteArea(): void {
+    if (!this.editingArea) return;
+
+    const area = this.editingArea;
+    if (this.editHandler) {
+      this.editHandler.revertLayers();
+      this.editHandler.disable();
+      this.editHandler = null;
+    }
+
+    this.deleteSaving = true;
+    this.areaService.deleteArea(area.id, area.currentVersion).subscribe({
+      next: (deleted) => {
+        this.deleteSaving = false;
+        this.clearEdit();
+        const coords = deleted.geometry.coordinates[0];
+        const latlngs = coords.map((c) => L.latLng(c[1], c[0]));
+        const grayPolygon = L.polygon(latlngs, { color: '#999999', weight: 2, opacity: 0.5, fillOpacity: 0.1 });
+        this.persistedItems.addLayer(grayPolygon);
+        this.deletedArea = deleted;
+        this.deletedLayer = grayPolygon;
+        this.cdr.detectChanges();
+      },
+      error: (err) => {
+        this.deleteSaving = false;
+        this.cdr.detectChanges();
+        if (err.status === 409) {
+          alert('This area was modified by another user. Reloading the latest version.');
+          this.clearEdit();
+          this.loadViewport();
+        } else {
+          console.error('Failed to delete area', err);
+          alert('Failed to delete area. See console for details.');
+        }
+      },
+    });
+  }
+
+  restoreDeletedArea(): void {
+    if (!this.deletedArea) return;
+
+    const area = this.deletedArea;
+    const targetVersion = area.currentVersion - 1;
+    this.restoreSaving = true;
+
+    this.areaService.restoreArea(area.id, targetVersion, area.currentVersion).subscribe({
+      next: (restored) => {
+        this.restoreSaving = false;
+        this.clearDeletedArea();
+        this.addPersistedArea(restored);
+        this.cdr.detectChanges();
+      },
+      error: (err) => {
+        this.restoreSaving = false;
+        this.cdr.detectChanges();
+        if (err.status === 409) {
+          alert('This area was modified by another user. Reloading the latest version.');
+          this.clearDeletedArea();
+          this.loadViewport();
+        } else {
+          console.error('Failed to restore area', err);
+          alert('Failed to restore area. See console for details.');
+        }
+      },
+    });
+  }
+
+  dismissDeleted(): void {
+    this.clearDeletedArea();
+  }
+
   private initMap(): void {
     this.map = L.map(this.mapRef.nativeElement, { doubleClickZoom: false }).setView([31.5, 34.8], 8);
 
@@ -200,6 +276,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
 
   private startEdit(area: Area, polygon: L.Polygon): void {
     this.clearPending();
+    this.clearDeletedArea();
     this.editItems.clearLayers();
 
     const coords = area.geometry.coordinates[0];
@@ -234,6 +311,17 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     this.editLayer = null;
     this.editName = '';
     this.editSaving = false;
+    this.deleteSaving = false;
+    this.cdr.detectChanges();
+  }
+
+  private clearDeletedArea(): void {
+    if (this.deletedLayer) {
+      this.persistedItems.removeLayer(this.deletedLayer);
+      this.deletedLayer = null;
+    }
+    this.deletedArea = null;
+    this.restoreSaving = false;
     this.cdr.detectChanges();
   }
 }

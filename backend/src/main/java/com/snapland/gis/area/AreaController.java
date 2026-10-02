@@ -2,6 +2,7 @@ package com.snapland.gis.area;
 
 import com.snapland.gis.area.dto.AreaResponse;
 import com.snapland.gis.area.dto.CreateAreaRequest;
+import com.snapland.gis.area.dto.RestoreAreaRequest;
 import com.snapland.gis.area.dto.UpdateAreaRequest;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Value;
@@ -47,5 +48,22 @@ public class AreaController {
             @PathVariable UUID areaId,
             @Valid @RequestBody UpdateAreaRequest request) {
         return areaService.updateArea(workspaceId, areaId, request, devUserId);
+    }
+
+    @DeleteMapping("/{areaId}")
+    public AreaResponse deleteArea(
+            @PathVariable UUID workspaceId,
+            @PathVariable UUID areaId,
+            @RequestParam int expectedVersion) {
+        return areaService.deleteArea(workspaceId, areaId, expectedVersion, devUserId);
+    }
+
+    @PostMapping("/{areaId}/versions/{version}/restore")
+    public AreaResponse restoreArea(
+            @PathVariable UUID workspaceId,
+            @PathVariable UUID areaId,
+            @PathVariable int version,
+            @Valid @RequestBody RestoreAreaRequest request) {
+        return areaService.restoreArea(workspaceId, areaId, version, request, devUserId);
     }
 }

@@ -3,9 +3,11 @@ package com.snapland.gis.area;
 import com.snapland.gis.area.dto.AreaResponse;
 import com.snapland.gis.area.dto.CreateAreaRequest;
 import com.snapland.gis.area.dto.GeoJsonGeometry;
+import com.snapland.gis.area.dto.RestoreAreaRequest;
 import com.snapland.gis.area.dto.UpdateAreaRequest;
 import com.snapland.gis.common.exception.AreaDeletedException;
 import com.snapland.gis.common.exception.AreaNotFoundException;
+import com.snapland.gis.common.exception.AreaVersionNotFoundException;
 import com.snapland.gis.common.exception.InvalidGeometryException;
 import com.snapland.gis.common.exception.VersionConflictException;
 import com.snapland.gis.common.exception.WorkspaceNotFoundException;
@@ -106,6 +108,79 @@ public class AreaService {
         areaVersionRepository.save(new AreaVersion(
                 area, newVersion, request.name(), polygon, areaKm2,
                 AreaStatus.ACTIVE, ChangeType.UPDATED, updatedBy));
+
+        return toResponse(area);
+    }
+
+    @Transactional
+    public AreaResponse deleteArea(UUID workspaceId, UUID areaId, int expectedVersion, UUID deletedByUserId) {
+        workspaceRepository.findById(workspaceId)
+                .orElseThrow(() -> new WorkspaceNotFoundException(workspaceId));
+
+        int affected = areaRepository.conditionalDelete(areaId, workspaceId, expectedVersion);
+
+        if (affected == 0) {
+            Area area = areaRepository.findById(areaId)
+                    .orElseThrow(() -> new AreaNotFoundException(areaId));
+            if (!workspaceId.equals(area.getWorkspace().getId())) {
+                throw new AreaNotFoundException(areaId);
+            }
+            if (area.getCurrentVersion() != expectedVersion) {
+                throw new VersionConflictException(areaId, expectedVersion, area.getCurrentVersion());
+            }
+            throw new AreaDeletedException(areaId);
+        }
+
+        User deletedBy = userRepository.findById(deletedByUserId)
+                .orElseThrow(() -> new IllegalStateException("Current user not found: " + deletedByUserId));
+
+        Area area = areaRepository.findById(areaId)
+                .orElseThrow(() -> new AreaNotFoundException(areaId));
+
+        int newVersion = area.getCurrentVersion();
+        areaVersionRepository.save(new AreaVersion(
+                area, newVersion, area.getName(), area.getGeometry(), area.getAreaKm2(),
+                AreaStatus.DELETED, ChangeType.DELETED, deletedBy));
+
+        return toResponse(area);
+    }
+
+    @Transactional
+    public AreaResponse restoreArea(UUID workspaceId, UUID areaId, int targetVersion,
+                                    RestoreAreaRequest request, UUID restoredByUserId) {
+        workspaceRepository.findById(workspaceId)
+                .orElseThrow(() -> new WorkspaceNotFoundException(workspaceId));
+
+        AreaVersion targetAreaVersion = areaVersionRepository.findByAreaIdAndVersion(areaId, targetVersion)
+                .orElseThrow(() -> new AreaVersionNotFoundException(areaId, targetVersion));
+
+        int affected = areaRepository.conditionalRestore(
+                areaId, workspaceId,
+                targetAreaVersion.getName(),
+                targetAreaVersion.getGeometry().toText(),
+                targetAreaVersion.getAreaKm2(),
+                request.expectedVersion());
+
+        if (affected == 0) {
+            Area area = areaRepository.findById(areaId)
+                    .orElseThrow(() -> new AreaNotFoundException(areaId));
+            if (!workspaceId.equals(area.getWorkspace().getId())) {
+                throw new AreaNotFoundException(areaId);
+            }
+            throw new VersionConflictException(areaId, request.expectedVersion(), area.getCurrentVersion());
+        }
+
+        User restoredBy = userRepository.findById(restoredByUserId)
+                .orElseThrow(() -> new IllegalStateException("Current user not found: " + restoredByUserId));
+
+        Area area = areaRepository.findById(areaId)
+                .orElseThrow(() -> new AreaNotFoundException(areaId));
+
+        int newVersion = area.getCurrentVersion();
+        areaVersionRepository.save(new AreaVersion(
+                area, newVersion, targetAreaVersion.getName(),
+                targetAreaVersion.getGeometry(), targetAreaVersion.getAreaKm2(),
+                AreaStatus.ACTIVE, ChangeType.RESTORED, restoredBy));
 
         return toResponse(area);
     }

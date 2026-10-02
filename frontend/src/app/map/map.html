@@ -34,18 +34,40 @@
         [(ngModel)]="editName"
         placeholder="Area name"
         class="area-name-input"
-        [disabled]="editSaving"
+        [disabled]="editSaving || deleteSaving"
       />
       <div class="area-panel-actions">
-        <button class="btn btn-secondary" (click)="cancelEdit()" [disabled]="editSaving">
+        <button class="btn btn-secondary" (click)="cancelEdit()" [disabled]="editSaving || deleteSaving">
           Cancel
+        </button>
+        <button
+          class="btn btn-danger"
+          (click)="deleteArea()"
+          [disabled]="editSaving || deleteSaving"
+        >
+          {{ deleteSaving ? 'Deleting…' : 'Delete' }}
         </button>
         <button
           class="btn btn-primary"
           (click)="saveEdit()"
-          [disabled]="!editName.trim() || editSaving"
+          [disabled]="!editName.trim() || editSaving || deleteSaving"
         >
           {{ editSaving ? 'Saving…' : 'Save' }}
+        </button>
+      </div>
+    </div>
+  }
+
+  @if (deletedArea) {
+    <div class="area-panel">
+      <div class="area-panel-title">Area Deleted</div>
+      <div class="area-preview">{{ deletedArea.name }}</div>
+      <div class="area-panel-actions">
+        <button class="btn btn-secondary" (click)="dismissDeleted()" [disabled]="restoreSaving">
+          Dismiss
+        </button>
+        <button class="btn btn-primary" (click)="restoreDeletedArea()" [disabled]="restoreSaving">
+          {{ restoreSaving ? 'Restoring…' : 'Restore' }}
         </button>
       </div>
     </div>

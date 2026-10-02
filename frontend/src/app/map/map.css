@@ -71,3 +71,8 @@
   background: #e8e8e8;
   color: #333;
 }
+
+.btn-danger {
+  background: #cc3300;
+  color: white;
+}

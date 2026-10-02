@@ -45,4 +45,41 @@ public interface AreaRepository extends JpaRepository<Area, UUID> {
             @Param("areaKm2") BigDecimal areaKm2,
             @Param("expectedVersion") int expectedVersion
     );
+
+    @Modifying
+    @Query(value = """
+            UPDATE area
+            SET status = 'DELETED',
+                current_version = current_version + 1
+            WHERE id = :areaId
+              AND workspace_id = :workspaceId
+              AND status = 'ACTIVE'
+              AND current_version = :expectedVersion
+            """, nativeQuery = true)
+    int conditionalDelete(
+            @Param("areaId") UUID areaId,
+            @Param("workspaceId") UUID workspaceId,
+            @Param("expectedVersion") int expectedVersion
+    );
+
+    @Modifying
+    @Query(value = """
+            UPDATE area
+            SET name = :name,
+                geometry = ST_GeomFromText(:geometryWkt, 4326),
+                area_km2 = :areaKm2,
+                status = 'ACTIVE',
+                current_version = current_version + 1
+            WHERE id = :areaId
+              AND workspace_id = :workspaceId
+              AND current_version = :expectedVersion
+            """, nativeQuery = true)
+    int conditionalRestore(
+            @Param("areaId") UUID areaId,
+            @Param("workspaceId") UUID workspaceId,
+            @Param("name") String name,
+            @Param("geometryWkt") String geometryWkt,
+            @Param("areaKm2") BigDecimal areaKm2,
+            @Param("expectedVersion") int expectedVersion
+    );
 }

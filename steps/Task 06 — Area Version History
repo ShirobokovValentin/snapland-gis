@@ -1,0 +1,583 @@
+We are starting Task 06 — Area Version History.
+
+Completed:
+
+- Task 01 — Project Bootstrap
+- Task 02 — Database Schema & Core Domain
+- Task 03 — First Working GIS Vertical Slice
+- Task 04 — Area Update & Versioning + Optimistic Concurrency
+- Task 05 — Area Delete & Restore
+
+The current implementation supports:
+
+- Area creation
+- viewport queries using PostGIS
+- Area updates
+- optimistic concurrency using atomic conditional mutations
+- append-only AreaVersion snapshots
+- soft delete
+- restore of any historical AreaVersion
+- restore of both ACTIVE and DELETED Areas
+- frontend create/edit/delete flows
+- immediate undo after delete
+- QA black-box specification in docs/TEST_CASES.md
+
+Task 06 should expose the existing version history to the user.
+
+Authoritative documentation:
+
+- CLAUDE.md
+- docs/REQUIREMENTS.md
+- docs/DESIGN.md
+- docs/TEST_CASES.md
+
+Before doing anything:
+
+1. Read CLAUDE.md.
+2. Read all relevant version-history, AreaVersion, restore, API,
+   authorization-boundary, and frontend sections of REQUIREMENTS.md
+   and DESIGN.md.
+3. Inspect the existing AreaVersion schema/entity/repository.
+4. Inspect the existing restore implementation from Task 05.
+5. Inspect the current Area popup/edit UI.
+6. Inspect existing integration tests.
+7. Inspect TEST_CASES.md for the current regression baseline.
+
+Do NOT modify any files yet.
+
+Produce an implementation plan for review.
+
+---
+
+## Goal
+
+Allow a user to inspect the complete version history of an Area and restore
+a selected historical version.
+
+Example:
+
+Area current state:
+
+v1 CREATED
+v2 UPDATED
+v3 UPDATED
+v4 DELETED
+v5 RESTORED
+v6 UPDATED
+
+The user should be able to open History and see these versions in a useful
+order.
+
+For an eligible historical version, the user should be able to restore it.
+
+Restore must use the existing Task 05 restore implementation and OCC
+semantics rather than introducing a second restore mechanism.
+
+---
+
+## Version History API
+
+Review DESIGN.md and use the documented endpoint if one already exists.
+
+Expected functionality is equivalent to:
+
+GET /workspaces/{workspaceId}/areas/{areaId}/versions
+
+Do not invent a different contract if DESIGN.md already defines one.
+
+The endpoint should return the Area's immutable AreaVersion history.
+
+Determine from DESIGN.md:
+
+- response structure;
+- ordering;
+- whether pagination exists;
+- whether currentVersion is represented specially;
+- whether changedBy is exposed;
+- timestamp representation;
+- geometry representation;
+- whether status/changeType are included.
+
+Do not invent fields solely for UI convenience.
+
+---
+
+## History Ordering
+
+Propose an explicit ordering.
+
+For the UI, newest-first is likely the most useful:
+
+v6
+v5
+v4
+v3
+v2
+v1
+
+But follow DESIGN.md if ordering is specified there.
+
+Ordering must be deterministic.
+
+Do not rely on implicit database row order.
+
+---
+
+## Historical Snapshot
+
+AreaVersion is an immutable snapshot.
+
+Review the existing schema and determine exactly which fields are available.
+
+The history API should expose enough information to understand a version,
+but avoid duplicating unnecessary data if DESIGN.md defines a smaller
+summary representation.
+
+Explicitly distinguish between:
+
+- history list information;
+- complete historical snapshot information.
+
+If DESIGN.md defines separate list/detail endpoints, follow it.
+
+If it defines only one endpoint, do not invent another without a concrete
+need.
+
+---
+
+## Geometry Preview
+
+We want the user to understand what a historical version represents.
+
+Review the existing frontend and propose the smallest useful UX.
+
+Possible behavior:
+
+Select version in History
+    ↓
+show historical polygon on map as preview
+    ↓
+current persisted Area remains unchanged
+    ↓
+Restore only happens after explicit user action
+
+Do not persist anything merely because a historical version was selected.
+
+Do not introduce a separate GIS visualization framework.
+
+Reuse Leaflet.
+
+If geometry preview would significantly increase Task 06 scope, identify
+that explicitly in the plan rather than silently implementing it.
+
+---
+
+## History UI
+
+Keep the UI appropriate for the current prototype.
+
+A minimal concept could be:
+
+Area popup
+    ↓
+History
+    ↓
+┌────────────────────────────────────┐
+│ Version History                    │
+│                                    │
+│ v6  UPDATED    Current             │
+│     2026-...                       │
+│                                    │
+│ v5  RESTORED             [Restore] │
+│     2026-...                       │
+│                                    │
+│ v4  DELETED              [Restore] │
+│     2026-...                       │
+│                                    │
+│ v3  UPDATED              [Restore] │
+│     2026-...                       │
+│                                    │
+│ v2  UPDATED              [Restore] │
+│                                    │
+│ v1  CREATED              [Restore] │
+└────────────────────────────────────┘
+
+This is only an example.
+
+Inspect the current frontend before proposing the actual integration.
+
+Do not redesign the whole UI.
+
+---
+
+## Restore From History
+
+The existing endpoint from Task 05 already restores a historical version.
+
+Reuse it.
+
+Conceptually:
+
+User views Area at currentVersion = 6
+    ↓
+selects Restore on v2
+    ↓
+POST .../versions/2/restore
+{
+  "expectedVersion": 6
+}
+    ↓
+backend creates v7 RESTORED
+    ↓
+Area becomes snapshot from v2
+    ↓
+history refreshes
+    ↓
+v7 appears as current
+
+Do NOT:
+
+- change currentVersion back to 2;
+- mutate v2;
+- delete versions 3–6;
+- create a second restore implementation.
+
+History remains append-only.
+
+---
+
+## Restore OCC
+
+The History UI must use the current version known when the restore action
+is initiated.
+
+If another mutation happens before restore:
+
+history loaded with currentVersion = 6
+
+another client updates Area:
+
+currentVersion = 7
+
+first client tries:
+
+restore v2 expectedVersion=6
+
+Expected:
+
+409 VERSION_CONFLICT
+
+Do not silently retry restore using version 7.
+
+Do not automatically overwrite the newer state.
+
+For the prototype, reuse the existing conflict-handling principles:
+
+- inform the user;
+- reload authoritative Area/history state.
+
+Propose the exact frontend behavior.
+
+---
+
+## Current Version
+
+The UI should clearly distinguish the current Area version from historical
+versions.
+
+Determine the cleanest source of truth for currentVersion:
+
+- current Area response;
+- history response;
+- existing frontend Area model.
+
+Do not infer current version from array position unless the API contract
+guarantees that explicitly.
+
+---
+
+## DELETED Areas
+
+This needs explicit consideration.
+
+Normal viewport queries exclude DELETED Areas.
+
+Therefore, after a deleted Area disappears from the normal map, its history
+is not normally discoverable through the map.
+
+Task 05 already provides immediate undo.
+
+For Task 06:
+
+- inspect DESIGN.md;
+- determine whether a general mechanism for discovering deleted Areas is
+  already required;
+- do not build a Deleted Areas management screen unless required.
+
+If arbitrary history access for a DELETED Area cannot be reached naturally
+from the current UI, report this as a limitation.
+
+Do not expand scope automatically.
+
+---
+
+## Workspace Boundary
+
+History access must enforce Workspace ownership.
+
+For Area X belonging to Workspace A:
+
+GET /workspaces/B/areas/{X}/versions
+
+must not expose:
+
+- existence of Area X;
+- its versions;
+- its version numbers;
+- its geometry;
+- its metadata.
+
+Use the established workspace-boundary semantics.
+
+Do not implement user authorization yet.
+
+---
+
+## Authentication / changedBy
+
+Authentication remains deferred.
+
+AreaVersion currently records the prototype development user.
+
+Do not introduce authentication infrastructure in this task.
+
+If changedBy is included in the API response, expose only what is supported
+by the current data model and DESIGN.md.
+
+Do not invent user profile APIs.
+
+---
+
+## Repository
+
+Prefer a simple deterministic query such as:
+
+find versions by areaId ordered by version descending
+
+while enforcing the Workspace boundary appropriately.
+
+Do not introduce caching.
+
+Do not introduce a separate history database or event store.
+
+AreaVersion in PostgreSQL remains the source of truth for history.
+
+---
+
+## Pagination
+
+Review DESIGN.md.
+
+If pagination is explicitly required for version history, propose it.
+
+If it is not required, do not introduce pagination solely because history
+could theoretically become large.
+
+This is still a prototype/home-assignment scope.
+
+---
+
+## Error Handling
+
+Review DESIGN.md and existing Task 05 error handling.
+
+At minimum determine behavior for:
+
+- Workspace not found;
+- Area not found;
+- Area belonging to another Workspace;
+- Area with no accessible history;
+- restore target version not found;
+- VERSION_CONFLICT during restore.
+
+Reuse existing error codes where appropriate.
+
+Do not invent unnecessary new error types.
+
+---
+
+## Frontend State
+
+Keep frontend state management simple.
+
+Do not introduce:
+
+- NgRx;
+- signals-based global stores solely for History;
+- Redux-style state management;
+- new frontend architecture.
+
+Use the existing component/service structure unless there is a concrete
+reason not to.
+
+---
+
+## Backend Integration Tests
+
+Add a dedicated history integration test class if appropriate, for example:
+
+AreaHistoryIntegrationTest
+
+Evaluate meaningful tests for:
+
+1. history returns all AreaVersions;
+2. versions are ordered deterministically;
+3. CREATED version appears;
+4. UPDATED versions appear;
+5. DELETED version appears;
+6. RESTORED version appears;
+7. historical snapshot fields are correct;
+8. history request for unknown Area;
+9. history request through another Workspace;
+10. history remains unchanged after reads;
+11. restoring historical version creates a new RESTORED version;
+12. old versions remain unchanged after restore;
+13. restored version becomes the new current version;
+14. stale restore from History returns VERSION_CONFLICT.
+
+Do not duplicate Task 05 restore tests unnecessarily.
+
+Tests should focus on behavior introduced by the History feature.
+
+Use the real PostgreSQL/PostGIS Testcontainers setup.
+
+---
+
+## Frontend Manual Flow
+
+The completed Task 06 should make this scenario demonstrable:
+
+1. Create Area "Original".
+2. Edit it to "Version 2".
+3. Change its geometry.
+4. Edit again to "Version 3".
+5. Open History.
+6. See CREATED and UPDATED versions.
+7. Select an older version.
+8. Inspect enough information to understand that version.
+9. Restore it.
+10. See the Area change to the historical snapshot.
+11. Open History again.
+12. See a new RESTORED version at the top.
+13. Refresh the browser.
+14. Verify the restored state remains current.
+
+This should be possible without database inspection.
+
+---
+
+## QA Test Cases
+
+After implementation and verification, propose additions to:
+
+docs/TEST_CASES.md
+
+Do not modify TEST_CASES.md during planning.
+
+Focus on meaningful black-box scenarios such as:
+
+- complete history retrieval;
+- deterministic ordering;
+- correct historical snapshots;
+- workspace isolation;
+- History UI;
+- restore historical version through UI;
+- RESTORED version appears after restore;
+- stale History restore conflict.
+
+Do not duplicate existing Task 05 restore cases unless History introduces
+new externally observable behavior.
+
+---
+
+## Explicitly Out of Scope
+
+Do NOT implement:
+
+- authentication;
+- authorization roles;
+- JWT;
+- OAuth;
+- Workspace management;
+- hard delete;
+- arbitrary version editing;
+- deletion of history;
+- mutation of AreaVersion;
+- diff visualization between versions;
+- side-by-side geometry comparison;
+- full audit-log infrastructure;
+- event sourcing;
+- WebSocket;
+- Redis Pub/Sub;
+- presence;
+- satellite mode;
+- caching;
+- production deployment;
+- large deleted-Area management screen.
+
+---
+
+## Scope Discipline
+
+Task 06 exposes data and behavior that already exist.
+
+The primary new capability is:
+
+AreaVersion history
+    ↓
+History API
+    ↓
+History UI
+    ↓
+Restore selected historical version
+
+Do not turn this into a general audit subsystem.
+
+---
+
+## Required Planning Output
+
+Before modifying files, provide:
+
+1. Exact history endpoint(s) defined by DESIGN.md.
+2. Exact response contract.
+3. History ordering.
+4. Whether list/detail endpoints are needed.
+5. How complete historical snapshots are represented.
+6. Workspace-boundary behavior.
+7. Behavior for ACTIVE and DELETED Areas.
+8. Repository query strategy.
+9. Error mappings.
+10. Proposed History UI.
+11. Whether historical geometry preview will be implemented.
+12. How current version is identified.
+13. Restore-from-History frontend flow.
+14. VERSION_CONFLICT frontend behavior.
+15. Backend files to create/modify.
+16. Frontend files to create/modify.
+17. Integration test plan.
+18. Whether any Flyway migration is required.
+19. Whether any new Maven/npm dependencies are required.
+20. Proposed TEST_CASES.md additions after implementation.
+21. Any discrepancies or ambiguities found in REQUIREMENTS.md or DESIGN.md.
+22. Decisions requiring approval.
+
+IMPORTANT:
+
+Do not create or modify any files yet.
+Do not stage files.
+Do not commit anything.
+Do not modify anything outside the repository.
+Do not install global packages or change machine configuration.
+
+Wait for explicit approval before implementation.

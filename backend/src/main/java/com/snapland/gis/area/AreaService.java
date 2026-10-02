@@ -1,6 +1,7 @@
 package com.snapland.gis.area;
 
 import com.snapland.gis.area.dto.AreaResponse;
+import com.snapland.gis.area.dto.AreaVersionResponse;
 import com.snapland.gis.area.dto.CreateAreaRequest;
 import com.snapland.gis.area.dto.GeoJsonGeometry;
 import com.snapland.gis.area.dto.RestoreAreaRequest;
@@ -185,6 +186,22 @@ public class AreaService {
         return toResponse(area);
     }
 
+    public List<AreaVersionResponse> getAreaVersions(UUID workspaceId, UUID areaId) {
+        workspaceRepository.findById(workspaceId)
+                .orElseThrow(() -> new WorkspaceNotFoundException(workspaceId));
+
+        Area area = areaRepository.findById(areaId)
+                .orElseThrow(() -> new AreaNotFoundException(areaId));
+        if (!workspaceId.equals(area.getWorkspace().getId())) {
+            throw new AreaNotFoundException(areaId);
+        }
+
+        return areaVersionRepository.findByAreaIdOrderByVersionDesc(areaId)
+                .stream()
+                .map(this::toVersionResponse)
+                .toList();
+    }
+
     public List<AreaResponse> findInViewport(UUID workspaceId, String bboxParam) {
         workspaceRepository.findById(workspaceId)
                 .orElseThrow(() -> new WorkspaceNotFoundException(workspaceId));
@@ -305,5 +322,18 @@ public class AreaService {
                 .map(c -> List.of(c.x, c.y))
                 .toList();
         return new GeoJsonGeometry("Polygon", List.of(ring));
+    }
+
+    private AreaVersionResponse toVersionResponse(AreaVersion av) {
+        return new AreaVersionResponse(
+                av.getId(),
+                av.getVersion(),
+                av.getName(),
+                toGeoJson(av.getGeometry()),
+                av.getAreaKm2(),
+                av.getStatus().name(),
+                av.getChangeType().name(),
+                av.getCreatedBy().getId(),
+                av.getCreatedAt());
     }
 }

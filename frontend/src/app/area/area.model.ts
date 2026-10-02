@@ -14,6 +14,18 @@ export interface Area {
   createdAt: string;
 }
 
+export interface AreaVersionResponse {
+  id: string;
+  version: number;
+  name: string;
+  geometry: GeoJsonGeometry;
+  areaKm2: number;
+  status: 'ACTIVE' | 'DELETED';
+  changeType: 'CREATED' | 'UPDATED' | 'DELETED' | 'RESTORED';
+  createdBy: string;
+  createdAt: string;
+}
+
 export interface CreateAreaRequest {
   name: string;
   geometry: GeoJsonGeometry;

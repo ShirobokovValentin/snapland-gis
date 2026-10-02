@@ -3,7 +3,7 @@ import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import * as L from 'leaflet';
 import { environment } from '../../environments/environment';
-import { Area, CreateAreaRequest, UpdateAreaRequest } from './area.model';
+import { Area, AreaVersionResponse, CreateAreaRequest, UpdateAreaRequest } from './area.model';
 
 @Injectable({ providedIn: 'root' })
 export class AreaService {
@@ -48,6 +48,12 @@ export class AreaService {
     return this.http.post<Area>(
       `${this.base}/workspaces/${this.workspaceId}/areas/${areaId}/versions/${targetVersion}/restore`,
       { expectedVersion },
+    );
+  }
+
+  getAreaVersions(areaId: string): Observable<AreaVersionResponse[]> {
+    return this.http.get<AreaVersionResponse[]>(
+      `${this.base}/workspaces/${this.workspaceId}/areas/${areaId}/versions`,
     );
   }
 

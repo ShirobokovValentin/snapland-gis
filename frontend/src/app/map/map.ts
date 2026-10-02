@@ -6,16 +6,16 @@ import {
   OnDestroy,
   ViewChild,
 } from '@angular/core';
-import { DecimalPipe } from '@angular/common';
+import { DatePipe, DecimalPipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import * as L from 'leaflet';
 import 'leaflet-draw';
 import { AreaService } from '../area/area.service';
-import { Area } from '../area/area.model';
+import { Area, AreaVersionResponse } from '../area/area.model';
 
 @Component({
   selector: 'app-map',
-  imports: [FormsModule, DecimalPipe],
+  imports: [FormsModule, DecimalPipe, DatePipe],
   templateUrl: './map.html',
   styleUrl: './map.css',
 })
@@ -36,6 +36,15 @@ export class MapComponent implements AfterViewInit, OnDestroy {
   deletedArea: Area | null = null;
   restoreSaving = false;
   private deletedLayer: L.Polygon | null = null;
+
+  historyArea: Area | null = null;
+  historyVersions: AreaVersionResponse[] = [];
+  historyLoading = false;
+  historySaving = false;
+  historyExpectedVersion = 0;
+  selectedHistoryVersion: AreaVersionResponse | null = null;
+  private previewLayer: L.Polygon | null = null;
+  private previewItems!: L.FeatureGroup;
 
   private map!: L.Map;
   private drawnItems!: L.FeatureGroup;
@@ -197,6 +206,87 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     this.clearDeletedArea();
   }
 
+  openHistory(area: Area): void {
+    this.clearPending();
+    this.clearEdit();
+    this.clearDeletedArea();
+    this.historyArea = area;
+    this.historyExpectedVersion = area.currentVersion;
+    this.historyVersions = [];
+    this.historyLoading = true;
+    this.selectedHistoryVersion = null;
+    this.cdr.detectChanges();
+
+    this.areaService.getAreaVersions(area.id).subscribe({
+      next: (versions) => {
+        this.historyVersions = versions;
+        this.historyLoading = false;
+        this.cdr.detectChanges();
+      },
+      error: (err) => {
+        this.historyLoading = false;
+        console.error('Failed to load version history', err);
+        this.cdr.detectChanges();
+        alert('Failed to load version history. See console for details.');
+      },
+    });
+  }
+
+  closeHistory(): void {
+    this.clearHistory();
+  }
+
+  selectHistoryVersion(version: AreaVersionResponse): void {
+    this.selectedHistoryVersion = version;
+    this.clearPreview();
+    const coords = version.geometry.coordinates[0];
+    const latlngs = coords.map((c) => L.latLng(c[1], c[0]));
+    this.previewLayer = L.polygon(latlngs, {
+      color: '#ff9900',
+      weight: 2,
+      opacity: 0.8,
+      dashArray: '6 4',
+      fillOpacity: 0.15,
+    });
+    this.previewItems.addLayer(this.previewLayer);
+    this.cdr.detectChanges();
+  }
+
+  restoreHistoricalVersion(version: AreaVersionResponse): void {
+    if (!this.historyArea) return;
+    const confirmed = confirm(
+      `Restore to version ${version.version} ("${version.name}")?\n\n` +
+      `This creates a new version of the area — previous history is preserved.`,
+    );
+    if (!confirmed) return;
+
+    const areaId = this.historyArea.id;
+    const expectedVersion = this.historyExpectedVersion;
+    this.historySaving = true;
+    this.cdr.detectChanges();
+
+    this.areaService.restoreArea(areaId, version.version, expectedVersion).subscribe({
+      next: () => {
+        this.historySaving = false;
+        this.clearHistory();
+        this.loadViewport();
+        this.cdr.detectChanges();
+      },
+      error: (err) => {
+        this.historySaving = false;
+        this.cdr.detectChanges();
+        if (err.status === 409) {
+          alert('This area was modified by another user. Reloading the latest version.');
+          this.clearHistory();
+          this.loadViewport();
+        } else {
+          console.error('Failed to restore version', err);
+          alert('Failed to restore version. See console for details.');
+        }
+      },
+    });
+  }
+
   private initMap(): void {
     this.map = L.map(this.mapRef.nativeElement, { doubleClickZoom: false }).setView([31.5, 34.8], 8);
 
@@ -208,6 +298,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     this.drawnItems = new L.FeatureGroup().addTo(this.map);
     this.editItems = new L.FeatureGroup().addTo(this.map);
     this.persistedItems = new L.FeatureGroup().addTo(this.map);
+    this.previewItems = new L.FeatureGroup().addTo(this.map);
 
     const drawControl = new L.Control.Draw({
       draw: {
@@ -255,18 +346,28 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     const polygon = L.polygon(latlngs, { color: '#0066cc', weight: 2 });
 
     const editBtn = `<button class="popup-edit-btn" data-area-id="${area.id}">Edit</button>`;
+    const historyBtn = `<button class="popup-history-btn" data-area-id="${area.id}">History</button>`;
     polygon.bindPopup(
-      `<strong>${area.name}</strong><br>${area.areaKm2.toFixed(3)} km²<br>${editBtn}`,
+      `<strong>${area.name}</strong><br>${area.areaKm2.toFixed(3)} km²<br><div class="popup-actions">${editBtn}${historyBtn}</div>`,
     );
 
     polygon.on('popupopen', () => {
-      const btn = document.querySelector<HTMLButtonElement>(
+      const edit = document.querySelector<HTMLButtonElement>(
         `.popup-edit-btn[data-area-id="${area.id}"]`,
       );
-      if (btn) {
-        btn.onclick = () => {
+      if (edit) {
+        edit.onclick = () => {
           polygon.closePopup();
           this.startEdit(area, polygon);
+        };
+      }
+      const history = document.querySelector<HTMLButtonElement>(
+        `.popup-history-btn[data-area-id="${area.id}"]`,
+      );
+      if (history) {
+        history.onclick = () => {
+          polygon.closePopup();
+          this.openHistory(area);
         };
       }
     });
@@ -277,6 +378,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
   private startEdit(area: Area, polygon: L.Polygon): void {
     this.clearPending();
     this.clearDeletedArea();
+    this.clearHistory();
     this.editItems.clearLayers();
 
     const coords = area.geometry.coordinates[0];
@@ -322,6 +424,24 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     }
     this.deletedArea = null;
     this.restoreSaving = false;
+    this.cdr.detectChanges();
+  }
+
+  private clearPreview(): void {
+    if (this.previewLayer) {
+      this.previewItems.removeLayer(this.previewLayer);
+      this.previewLayer = null;
+    }
+  }
+
+  private clearHistory(): void {
+    this.clearPreview();
+    this.historyArea = null;
+    this.historyVersions = [];
+    this.historyLoading = false;
+    this.historySaving = false;
+    this.historyExpectedVersion = 0;
+    this.selectedHistoryVersion = null;
     this.cdr.detectChanges();
   }
 }

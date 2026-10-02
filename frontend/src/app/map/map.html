@@ -58,6 +58,46 @@
     </div>
   }
 
+  @if (historyArea) {
+    <div class="area-panel history-panel">
+      <div class="area-panel-title">Version History</div>
+      <div class="area-preview history-area-name">{{ historyArea.name }}</div>
+      @if (historyLoading) {
+        <div class="history-loading">Loading…</div>
+      }
+      @if (!historyLoading) {
+        <div class="history-list">
+          @for (v of historyVersions; track v.id) {
+            <div
+              class="history-row"
+              [class.history-row-selected]="selectedHistoryVersion?.id === v.id"
+              (click)="selectHistoryVersion(v)"
+            >
+              <div class="history-row-meta">
+                <span class="history-version">v{{ v.version }}</span>
+                <span class="history-change-type">{{ v.changeType }}</span>
+                <span class="history-date">{{ v.createdAt | date: 'yyyy-MM-dd HH:mm' }}</span>
+              </div>
+              <div class="history-row-name">{{ v.name }}</div>
+              <button
+                class="btn btn-secondary history-restore-btn"
+                [disabled]="historySaving || v.version === historyExpectedVersion"
+                (click)="$event.stopPropagation(); restoreHistoricalVersion(v)"
+              >
+                {{ historySaving ? '…' : 'Restore' }}
+              </button>
+            </div>
+          }
+        </div>
+      }
+      <div class="area-panel-actions">
+        <button class="btn btn-secondary" (click)="closeHistory()" [disabled]="historySaving">
+          Close
+        </button>
+      </div>
+    </div>
+  }
+
   @if (deletedArea) {
     <div class="area-panel">
       <div class="area-panel-title">Area Deleted</div>

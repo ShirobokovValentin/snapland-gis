@@ -1,6 +1,7 @@
 package com.snapland.gis.area;
 
 import com.snapland.gis.area.dto.AreaResponse;
+import com.snapland.gis.area.dto.AreaVersionResponse;
 import com.snapland.gis.area.dto.CreateAreaRequest;
 import com.snapland.gis.area.dto.RestoreAreaRequest;
 import com.snapland.gis.area.dto.UpdateAreaRequest;
@@ -56,6 +57,13 @@ public class AreaController {
             @PathVariable UUID areaId,
             @RequestParam int expectedVersion) {
         return areaService.deleteArea(workspaceId, areaId, expectedVersion, devUserId);
+    }
+
+    @GetMapping("/{areaId}/versions")
+    public List<AreaVersionResponse> getAreaVersions(
+            @PathVariable UUID workspaceId,
+            @PathVariable UUID areaId) {
+        return areaService.getAreaVersions(workspaceId, areaId);
     }
 
     @PostMapping("/{areaId}/versions/{version}/restore")

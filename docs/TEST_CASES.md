@@ -17,14 +17,15 @@ observed through its HTTP API and browser UI.
 - Area update via REST API with optimistic concurrency control
 - Area deletion via REST API with optimistic concurrency control
 - Area restore from historical version via REST API
+- Area version history retrieval via REST API
 - Map rendering and polygon drawing in the browser
 - Area editing in the browser (rename and reshape)
 - Area deletion and immediate restore in the browser
+- Area history panel in the browser with version preview and restore
 - Area persistence and reload
 
 **Explicitly out of scope (not yet implemented):**
 - Authentication and authorization
-- Version history API
 - WebSocket / real-time collaboration
 - Redis and presence
 - Satellite map layer
@@ -1406,6 +1407,176 @@ Restore explicitly supports reverting an ACTIVE Area to any historical snapshot.
 - HTTP `400 Bad Request`.
 - Response body `code` = `"INVALID_REQUEST"`.
 - Area is not modified.
+
+---
+
+## 4b. Area Version History Tests
+
+### Shared Preconditions
+
+- Backend is running.
+- Dev Workspace and Dev User are seeded.
+- Reference Polygon is defined in Section 3.
+
+---
+
+### TC-HISTORY-001 — Version list returns all versions ordered version DESC
+
+**Type:** API
+**Priority:** Critical
+
+**Preconditions:**
+- An Area `{areaId}` has been created once and updated twice, producing versions 1, 2, 3.
+
+**Steps:**
+1. `GET /workspaces/00000000-0000-0000-0000-000000000002/areas/{areaId}/versions`
+
+**Expected Result:**
+- HTTP `200 OK`.
+- Response is a JSON array of 3 objects.
+- `[0].version` = `3`, `[1].version` = `2`, `[2].version` = `1`.
+
+---
+
+### TC-HISTORY-002 — Version list contains all expected change types
+
+**Type:** API
+**Priority:** High
+
+**Preconditions:**
+- Area created, updated once, deleted, then restored from version 1.
+- Area is now at version 4.
+
+**Steps:**
+1. `GET .../versions`
+
+**Expected Result:**
+- HTTP `200 OK`.
+- Response is an array of 4 objects ordered version DESC.
+- Change types newest-first: `RESTORED`, `DELETED`, `UPDATED`, `CREATED`.
+
+---
+
+### TC-HISTORY-003 — Each version snapshot contains correct name, geometry, areaKm2, status, and changeType
+
+**Type:** API
+**Priority:** High
+
+**Preconditions:**
+- Area created with name `"First"` and geometry A (Reference Polygon).
+- Area updated with name `"Second"` and geometry B (a different valid polygon).
+
+**Steps:**
+1. `GET .../versions`
+
+**Expected Result:**
+- HTTP `200 OK`.
+- `[0]` (v2): `name` = `"Second"`, `status` = `"ACTIVE"`, `changeType` = `"UPDATED"`,
+  geometry matches B, `areaKm2` > 0.
+- `[1]` (v1): `name` = `"First"`, `status` = `"ACTIVE"`, `changeType` = `"CREATED"`,
+  geometry matches A.
+- `geometry.coordinates` of v1 and v2 differ.
+- Each entry contains `id` (UUID), `createdBy` (UUID), and `createdAt`
+  (ISO-8601 timestamp).
+
+---
+
+### TC-HISTORY-004 — Version list is available for a DELETED Area
+
+**Type:** API
+**Priority:** Medium
+
+**Preconditions:**
+- Area created and then deleted. `currentVersion` = 2.
+
+**Steps:**
+1. `GET .../versions`
+
+**Expected Result:**
+- HTTP `200 OK`.
+- Response is an array of 2 objects.
+- `[0].changeType` = `"DELETED"`, `[0].status` = `"DELETED"`.
+- `[1].changeType` = `"CREATED"`, `[1].status` = `"ACTIVE"`.
+
+---
+
+### TC-HISTORY-005 — Unknown areaId returns 404 AREA_NOT_FOUND
+
+**Type:** API
+**Priority:** High
+
+**Steps:**
+1. `GET /workspaces/00000000-0000-0000-0000-000000000002/areas/{randomUUID}/versions`
+
+**Expected Result:**
+- HTTP `404 Not Found`.
+- Response body `code` = `"AREA_NOT_FOUND"`.
+
+---
+
+### TC-HISTORY-006 — Area in another workspace returns 404 AREA_NOT_FOUND
+
+**Type:** API
+**Priority:** High
+
+**Preconditions:**
+- A second Workspace W2 exists. An Area `{areaId-W2}` belongs to W2.
+
+**Steps:**
+1. `GET /workspaces/00000000-0000-0000-0000-000000000002/areas/{areaId-W2}/versions`
+
+**Expected Result:**
+- HTTP `404 Not Found`.
+- Response body `code` = `"AREA_NOT_FOUND"`.
+- The existence of the Area in W2 is not revealed.
+
+---
+
+### TC-HISTORY-007 — Unknown workspace returns 404 WORKSPACE_NOT_FOUND
+
+**Type:** API
+**Priority:** Medium
+
+**Steps:**
+1. `GET /workspaces/{randomUUID}/areas/{anyAreaId}/versions`
+
+**Expected Result:**
+- HTTP `404 Not Found`.
+- Response body `code` = `"WORKSPACE_NOT_FOUND"`.
+
+---
+
+### TC-HISTORY-008 — Restore from history creates a new RESTORED version; previous versions are unchanged
+
+**Type:** API
+**Priority:** Critical
+
+**Preconditions:**
+- Area at version 2 with name `"v2"` and geometry B.
+- Version 1 has name `"v1"` and geometry A.
+
+**Steps:**
+1. `POST .../areas/{areaId}/versions/1/restore` with `{ "expectedVersion": 2 }`.
+2. `GET .../areas/{areaId}/versions`.
+
+**Request (step 1):**
+- Method: `POST`
+- Path: `/workspaces/00000000-0000-0000-0000-000000000002/areas/{areaId}/versions/1/restore`
+- Body: `{ "expectedVersion": 2 }`
+
+**Expected Result:**
+- Step 1 returns HTTP `200 OK`.
+- Response body `currentVersion` = `3`, `status` = `"ACTIVE"`.
+- Response body `name`, `geometry`, and `areaKm2` correspond to the v1 snapshot.
+- Step 2 returns an array of 3 objects.
+- `[0]` (v3): `changeType` = `"RESTORED"`, `name` = `"v1"`, `status` = `"ACTIVE"`,
+  geometry and `areaKm2` match the v1 snapshot.
+- `[1]` (v2): `changeType` = `"UPDATED"`, `name` = `"v2"`, geometry matches B.
+  Values are identical to those recorded before the restore.
+- `[2]` (v1): `changeType` = `"CREATED"`, `name` = `"v1"`, geometry matches A.
+  Values are identical to those recorded at creation.
+- Total number of AreaVersions is exactly 3. No historical version is
+  modified or removed.
 
 ---
 

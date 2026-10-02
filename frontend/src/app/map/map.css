@@ -76,3 +76,101 @@
   background: #cc3300;
   color: white;
 }
+
+.history-panel {
+  min-width: 280px;
+  max-width: 340px;
+}
+
+.history-area-name {
+  font-weight: 500;
+}
+
+.history-loading {
+  font-size: 13px;
+  color: #777;
+  padding: 4px 0;
+}
+
+.history-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 320px;
+  overflow-y: auto;
+}
+
+.history-row {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 6px 8px;
+  border: 1px solid #e0e0e0;
+  border-radius: 3px;
+  cursor: pointer;
+  background: #fafafa;
+}
+
+.history-row:hover {
+  background: #f0f4ff;
+  border-color: #b0c4ee;
+}
+
+.history-row-selected {
+  background: #e8f0fe;
+  border-color: #0066cc;
+}
+
+.history-row-meta {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  font-size: 12px;
+  color: #555;
+}
+
+.history-version {
+  font-weight: 600;
+  color: #333;
+}
+
+.history-change-type {
+  text-transform: lowercase;
+  color: #666;
+}
+
+.history-date {
+  margin-left: auto;
+  color: #888;
+}
+
+.history-row-name {
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.history-restore-btn {
+  align-self: flex-end;
+  margin-top: 2px;
+  padding: 3px 10px;
+  font-size: 12px;
+}
+
+.popup-actions {
+  display: flex;
+  gap: 6px;
+  margin-top: 4px;
+}
+
+.popup-actions button {
+  padding: 3px 10px;
+  border: 1px solid #ccc;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 12px;
+  background: #f5f5f5;
+}
+
+.popup-actions button:hover {
+  background: #e8e8e8;
+}

@@ -1,0 +1,266 @@
+We are starting Task 02: Database Schema & Core Domain.
+
+The project bootstrap is complete and verified.
+
+Authoritative documentation:
+
+- docs/REQUIREMENTS.md
+- docs/DESIGN.md
+- CLAUDE.md
+
+Goal:
+Implement the core persistence model defined in DESIGN.md using
+PostgreSQL + PostGIS, Flyway, JPA/Hibernate, and integration tests.
+
+This task establishes the database schema and persistence model only.
+Do not implement business use cases or APIs yet.
+
+Before doing anything:
+
+1. Read CLAUDE.md.
+2. Read the relevant sections of docs/REQUIREMENTS.md.
+3. Read the following sections of docs/DESIGN.md carefully:
+   - Glossary
+   - Domain Entities
+   - Data Model & GIS Storage
+   - Data Model & Database Constraints
+   - Area / AreaVersion Storage Model
+   - Geometry Storage
+   - Indexes
+4. Inspect the existing backend and current Flyway migrations.
+5. Inspect the current Docker/PostGIS setup.
+
+Do NOT modify any files yet.
+
+Produce an implementation plan for review.
+
+---
+
+## Scope
+
+Implement persistence support for these domain entities:
+
+- User
+- Workspace
+- WorkspaceMember
+- Area
+- AreaVersion
+
+Follow the model and invariants defined in DESIGN.md.
+
+### User
+
+Fields defined by the design:
+
+- id
+- name
+- email
+- created_at
+
+Requirements:
+
+- Primary key on id
+- Unique email
+- email NOT NULL
+- created_at NOT NULL
+
+### Workspace
+
+Fields:
+
+- id
+- name
+- created_by
+- created_at
+
+Requirements:
+
+- Primary key
+- created_by FK -> User
+- required fields according to DESIGN.md
+- ON DELETE behavior according to DESIGN.md
+
+### WorkspaceMember
+
+Fields:
+
+- id
+- workspace_id
+- user_id
+- role
+
+Requirements:
+
+- Foreign keys
+- UNIQUE(workspace_id, user_id)
+- Role values defined by the design:
+  OWNER, EDITOR, VIEWER
+
+### Area
+
+Fields:
+
+- id
+- workspace_id
+- name
+- geometry
+- area_km2
+- status
+- current_version
+- created_by
+- created_at
+
+Requirements:
+
+- geometry must use PostGIS geometry(POLYGON, 4326)
+- status values:
+  ACTIVE, DELETED
+- current_version >= 1
+- area_km2 >= 0
+- persisted geometry must be valid
+- foreign keys and required constraints according to DESIGN.md
+
+Area represents the CURRENT state.
+
+### AreaVersion
+
+Fields:
+
+- id
+- area_id
+- version
+- name
+- geometry
+- area_km2
+- status
+- change_type
+- created_by
+- created_at
+
+Requirements:
+
+- geometry(POLYGON, 4326)
+- UNIQUE(area_id, version)
+- version >= 1
+- area_km2 >= 0
+- valid geometry
+- status:
+  ACTIVE, DELETED
+- change_type:
+  CREATED, UPDATED, DELETED, RESTORED
+
+AreaVersion represents immutable historical state.
+
+Do not implement update/delete operations for AreaVersion in this task.
+
+---
+
+## Database Migrations
+
+Keep:
+
+V1__enable_postgis.sql
+
+Create a new migration for the core schema.
+
+Do not modify V1.
+
+Prefer a single coherent V2 migration for the initial domain schema unless
+there is a strong technical reason to split it.
+
+Database constraints must enforce the invariants that DESIGN.md assigns
+to the database.
+
+---
+
+## Indexes
+
+Implement only indexes justified by access patterns explicitly defined
+in DESIGN.md.
+
+This must include the spatial GiST index required for Area geometry.
+
+Review DESIGN.md and identify any additional B-tree indexes required for:
+
+- Workspace membership lookup
+- Areas by workspace
+- AreaVersion history lookup
+
+Do not add speculative indexes.
+
+Explain each proposed explicit index and the query/access pattern it supports.
+
+---
+
+## JPA / Hibernate
+
+Create the persistence/domain mappings required for these entities.
+
+Before implementation, propose:
+
+- Java entity classes
+- enum classes
+- ID type
+- relationship mappings
+- geometry Java type and Hibernate Spatial integration
+- package structure
+
+Do not introduce DTOs, controllers, services, API models, or business
+use-case abstractions in this task.
+
+Avoid unnecessary bidirectional JPA relationships.
+
+Prefer mappings that make persistence behavior explicit and predictable.
+
+---
+
+## PostGIS / Hibernate Spatial
+
+Determine the appropriate current Hibernate Spatial support compatible
+with the Spring Boot/Hibernate version already used by the project.
+
+Do not represent persisted geometry as String, JSON, or arbitrary arrays.
+
+The Java representation must correctly map to:
+
+geometry(POLYGON, 4326)
+
+Explain the proposed Java geometry type and dependency before implementation.
+
+---
+
+## Integration Testing
+
+Do NOT use H2 for persistence tests.
+
+Propose integration tests using Testcontainers with a real
+PostgreSQL/PostGIS database.
+
+Tests should verify at minimum:
+
+- Flyway migrations execute successfully
+- PostGIS extension is available
+- schema is created
+- important UNIQUE constraints
+- CHECK constraints where practical
+- foreign keys
+- geometry(POLYGON, 4326) persistence
+- invalid geometry is rejected
+- SRID behavior
+- GiST spatial index exists
+- basic entity persistence
+
+Use the same PostgreSQL/PostGIS major versions as local development
+where practical.
+
+Do not mock the database for these tests.
+
+---
+
+## Explicitly Out of Scope
+
+Do NOT implement:
+
+- REST controllers
+- API DTOs
+- Area create/update/delete/r

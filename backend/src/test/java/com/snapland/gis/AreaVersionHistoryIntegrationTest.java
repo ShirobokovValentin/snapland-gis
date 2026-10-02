@@ -10,9 +10,11 @@ import com.snapland.gis.dev.DevProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -33,7 +35,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Testcontainers
-@ActiveProfiles("dev")
+@ActiveProfiles("test")
 class AreaVersionHistoryIntegrationTest {
 
     @Container
@@ -59,16 +61,27 @@ class AreaVersionHistoryIntegrationTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
+    @Value("${app.auth.jwt-secret}")
+    private String jwtSecret;
+
+    private String devToken;
     private UUID workspaceId;
 
     @BeforeEach
     void cleanAreas() {
         workspaceId = devProperties.workspaceId();
+        devToken = TestJwtUtil.generateToken(jwtSecret, devProperties.userId());
         jdbcTemplate.update("DELETE FROM area_version");
         jdbcTemplate.update("DELETE FROM area");
     }
 
     // --- helpers ---
+
+    private HttpHeaders authHeaders() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(devToken);
+        return headers;
+    }
 
     private GeoJsonGeometry squarePolygon() {
         List<List<Double>> ring = List.of(
@@ -103,17 +116,18 @@ class AreaVersionHistoryIntegrationTest {
     }
 
     private UUID createArea(String name, GeoJsonGeometry geometry) {
-        ResponseEntity<AreaResponse> response = restTemplate.postForEntity(
-                areasUrl(), new CreateAreaRequest(name, geometry), AreaResponse.class);
+        ResponseEntity<AreaResponse> response = restTemplate.exchange(
+                areasUrl(), HttpMethod.POST,
+                new HttpEntity<>(new CreateAreaRequest(name, geometry), authHeaders()),
+                AreaResponse.class);
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         return response.getBody().id();
     }
 
     private void updateArea(UUID areaId, int expectedVersion, String name, GeoJsonGeometry geometry) {
         ResponseEntity<AreaResponse> response = restTemplate.exchange(
-                areasUrl() + "/" + areaId,
-                HttpMethod.PUT,
-                new HttpEntity<>(new UpdateAreaRequest(expectedVersion, name, geometry)),
+                areasUrl() + "/" + areaId, HttpMethod.PUT,
+                new HttpEntity<>(new UpdateAreaRequest(expectedVersion, name, geometry), authHeaders()),
                 AreaResponse.class);
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     }
@@ -121,22 +135,22 @@ class AreaVersionHistoryIntegrationTest {
     private void deleteArea(UUID areaId, int expectedVersion) {
         ResponseEntity<AreaResponse> response = restTemplate.exchange(
                 areasUrl() + "/" + areaId + "?expectedVersion=" + expectedVersion,
-                HttpMethod.DELETE, null, AreaResponse.class);
+                HttpMethod.DELETE, new HttpEntity<>(null, authHeaders()), AreaResponse.class);
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     }
 
     private void restoreArea(UUID areaId, int targetVersion, int expectedVersion) {
         ResponseEntity<AreaResponse> response = restTemplate.exchange(
-                restoreUrl(areaId, targetVersion),
-                HttpMethod.POST,
-                new HttpEntity<>(new RestoreAreaRequest(expectedVersion)),
+                restoreUrl(areaId, targetVersion), HttpMethod.POST,
+                new HttpEntity<>(new RestoreAreaRequest(expectedVersion), authHeaders()),
                 AreaResponse.class);
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
     }
 
     private AreaVersionResponse[] getVersions(UUID areaId) {
-        ResponseEntity<AreaVersionResponse[]> response = restTemplate.getForEntity(
-                versionsUrl(areaId), AreaVersionResponse[].class);
+        ResponseEntity<AreaVersionResponse[]> response = restTemplate.exchange(
+                versionsUrl(areaId), HttpMethod.GET,
+                new HttpEntity<>(null, authHeaders()), AreaVersionResponse[].class);
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.OK);
         return response.getBody();
     }
@@ -205,8 +219,9 @@ class AreaVersionHistoryIntegrationTest {
 
     @Test
     void getVersions_returns404ForUnknownArea() {
-        ResponseEntity<Map> response = restTemplate.getForEntity(
-                versionsUrl(UUID.randomUUID()), Map.class);
+        ResponseEntity<Map> response = restTemplate.exchange(
+                versionsUrl(UUID.randomUUID()), HttpMethod.GET,
+                new HttpEntity<>(null, authHeaders()), Map.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
         assertThat(response.getBody().get("code")).isEqualTo("AREA_NOT_FOUND");
@@ -226,8 +241,9 @@ class AreaVersionHistoryIntegrationTest {
                 "VALUES (?::uuid, ?::uuid, 'A', ST_GeomFromText('POLYGON((35.50 32.70, 35.55 32.70, 35.55 32.75, 35.50 32.75, 35.50 32.70))', 4326), 1.0, 'ACTIVE', 1, ?::uuid, NOW())",
                 otherAreaId.toString(), otherWorkspaceId.toString(), userId.toString());
 
-        ResponseEntity<Map> response = restTemplate.getForEntity(
-                versionsUrl(otherAreaId), Map.class);
+        ResponseEntity<Map> response = restTemplate.exchange(
+                versionsUrl(otherAreaId), HttpMethod.GET,
+                new HttpEntity<>(null, authHeaders()), Map.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
         assertThat(response.getBody().get("code")).isEqualTo("AREA_NOT_FOUND");
@@ -238,9 +254,9 @@ class AreaVersionHistoryIntegrationTest {
         UUID unknownWorkspace = UUID.randomUUID();
         UUID areaId = createArea("Test", squarePolygon());
 
-        ResponseEntity<Map> response = restTemplate.getForEntity(
+        ResponseEntity<Map> response = restTemplate.exchange(
                 "/workspaces/" + unknownWorkspace + "/areas/" + areaId + "/versions",
-                Map.class);
+                HttpMethod.GET, new HttpEntity<>(null, authHeaders()), Map.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
         assertThat(response.getBody().get("code")).isEqualTo("WORKSPACE_NOT_FOUND");
@@ -302,9 +318,8 @@ class AreaVersionHistoryIntegrationTest {
         updateArea(areaId, 1, "v2", altPolygon());
         // currentVersion is now 2; pass stale expectedVersion=1
         ResponseEntity<Map> response = restTemplate.exchange(
-                restoreUrl(areaId, 1),
-                HttpMethod.POST,
-                new HttpEntity<>(new RestoreAreaRequest(1)),
+                restoreUrl(areaId, 1), HttpMethod.POST,
+                new HttpEntity<>(new RestoreAreaRequest(1), authHeaders()),
                 Map.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);

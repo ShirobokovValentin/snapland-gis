@@ -6,9 +6,10 @@ import com.snapland.gis.area.dto.CreateAreaRequest;
 import com.snapland.gis.area.dto.RestoreAreaRequest;
 import com.snapland.gis.area.dto.UpdateAreaRequest;
 import jakarta.validation.Valid;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
+import org.springframework.security.core.annotation.AuthenticationPrincipal;
+import org.springframework.security.oauth2.jwt.Jwt;
 import org.springframework.web.bind.annotation.*;
 
 import java.util.List;
@@ -20,10 +21,6 @@ public class AreaController {
 
     private final AreaService areaService;
 
-    // TODO: replace with authenticated user identity when authentication is implemented
-    @Value("${app.dev.user-id:#{null}}")
-    private UUID devUserId;
-
     public AreaController(AreaService areaService) {
         this.areaService = areaService;
     }
@@ -31,8 +28,9 @@ public class AreaController {
     @PostMapping
     public ResponseEntity<AreaResponse> createArea(
             @PathVariable UUID workspaceId,
-            @Valid @RequestBody CreateAreaRequest request) {
-        AreaResponse response = areaService.createArea(workspaceId, request, devUserId);
+            @Valid @RequestBody CreateAreaRequest request,
+            @AuthenticationPrincipal Jwt jwt) {
+        AreaResponse response = areaService.createArea(workspaceId, request, UUID.fromString(jwt.getSubject()));
         return ResponseEntity.status(HttpStatus.CREATED).body(response);
     }
 
@@ -47,16 +45,18 @@ public class AreaController {
     public AreaResponse updateArea(
             @PathVariable UUID workspaceId,
             @PathVariable UUID areaId,
-            @Valid @RequestBody UpdateAreaRequest request) {
-        return areaService.updateArea(workspaceId, areaId, request, devUserId);
+            @Valid @RequestBody UpdateAreaRequest request,
+            @AuthenticationPrincipal Jwt jwt) {
+        return areaService.updateArea(workspaceId, areaId, request, UUID.fromString(jwt.getSubject()));
     }
 
     @DeleteMapping("/{areaId}")
     public AreaResponse deleteArea(
             @PathVariable UUID workspaceId,
             @PathVariable UUID areaId,
-            @RequestParam int expectedVersion) {
-        return areaService.deleteArea(workspaceId, areaId, expectedVersion, devUserId);
+            @RequestParam int expectedVersion,
+            @AuthenticationPrincipal Jwt jwt) {
+        return areaService.deleteArea(workspaceId, areaId, expectedVersion, UUID.fromString(jwt.getSubject()));
     }
 
     @GetMapping("/{areaId}/versions")
@@ -71,7 +71,8 @@ public class AreaController {
             @PathVariable UUID workspaceId,
             @PathVariable UUID areaId,
             @PathVariable int version,
-            @Valid @RequestBody RestoreAreaRequest request) {
-        return areaService.restoreArea(workspaceId, areaId, version, request, devUserId);
+            @Valid @RequestBody RestoreAreaRequest request,
+            @AuthenticationPrincipal Jwt jwt) {
+        return areaService.restoreArea(workspaceId, areaId, version, request, UUID.fromString(jwt.getSubject()));
     }
 }

@@ -20,6 +20,11 @@ spring:
     serialization:
       write-dates-as-timestamps: false
 
+app:
+  auth:
+    jwt-secret: ${JWT_SECRET}
+    jwt-expiration: PT24H
+
 management:
   endpoints:
     web:

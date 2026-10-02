@@ -11,9 +11,11 @@ import com.snapland.gis.dev.DevProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -40,7 +42,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Testcontainers
-@ActiveProfiles("dev")
+@ActiveProfiles("test")
 class AreaDeleteRestoreIntegrationTest {
 
     @Container
@@ -72,16 +74,27 @@ class AreaDeleteRestoreIntegrationTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
+    @Value("${app.auth.jwt-secret}")
+    private String jwtSecret;
+
+    private String devToken;
     private UUID workspaceId;
 
     @BeforeEach
     void cleanAreas() {
         workspaceId = devProperties.workspaceId();
+        devToken = TestJwtUtil.generateToken(jwtSecret, devProperties.userId());
         jdbcTemplate.update("DELETE FROM area_version");
         jdbcTemplate.update("DELETE FROM area");
     }
 
     // --- helpers ---
+
+    private HttpHeaders authHeaders() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(devToken);
+        return headers;
+    }
 
     private GeoJsonGeometry squarePolygon() {
         List<List<Double>> ring = List.of(
@@ -124,21 +137,24 @@ class AreaDeleteRestoreIntegrationTest {
     }
 
     private UUID createArea(String name, GeoJsonGeometry geometry) {
-        ResponseEntity<AreaResponse> response = restTemplate.postForEntity(
-                areasUrl(), new CreateAreaRequest(name, geometry), AreaResponse.class);
+        ResponseEntity<AreaResponse> response = restTemplate.exchange(
+                areasUrl(), HttpMethod.POST,
+                new HttpEntity<>(new CreateAreaRequest(name, geometry), authHeaders()),
+                AreaResponse.class);
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         return response.getBody().id();
     }
 
     private ResponseEntity<AreaResponse> doDelete(UUID areaId, int expectedVersion) {
         return restTemplate.exchange(
-                deleteUrl(areaId, expectedVersion), HttpMethod.DELETE, null, AreaResponse.class);
+                deleteUrl(areaId, expectedVersion), HttpMethod.DELETE,
+                new HttpEntity<>(null, authHeaders()), AreaResponse.class);
     }
 
     private ResponseEntity<AreaResponse> doRestore(UUID areaId, int targetVersion, int expectedVersion) {
         return restTemplate.exchange(
                 restoreUrl(areaId, targetVersion), HttpMethod.POST,
-                new HttpEntity<>(new RestoreAreaRequest(expectedVersion)), AreaResponse.class);
+                new HttpEntity<>(new RestoreAreaRequest(expectedVersion), authHeaders()), AreaResponse.class);
     }
 
     // --- delete tests ---
@@ -190,7 +206,8 @@ class AreaDeleteRestoreIntegrationTest {
         UUID areaId = createArea();
 
         ResponseEntity<Map> response = restTemplate.exchange(
-                deleteUrl(areaId, 99), HttpMethod.DELETE, null, Map.class);
+                deleteUrl(areaId, 99), HttpMethod.DELETE,
+                new HttpEntity<>(null, authHeaders()), Map.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
         assertThat(response.getBody().get("code")).isEqualTo("VERSION_CONFLICT");
@@ -201,7 +218,8 @@ class AreaDeleteRestoreIntegrationTest {
         UUID areaId = createArea();
 
         ResponseEntity<Map> response = restTemplate.exchange(
-                deleteUrl(areaId, 99), HttpMethod.DELETE, null, Map.class);
+                deleteUrl(areaId, 99), HttpMethod.DELETE,
+                new HttpEntity<>(null, authHeaders()), Map.class);
 
         Map<?, ?> details = (Map<?, ?>) response.getBody().get("details");
         assertThat(details.get("areaId").toString()).isEqualTo(areaId.toString());
@@ -212,7 +230,8 @@ class AreaDeleteRestoreIntegrationTest {
     @Test
     void deleteArea_returns404ForUnknownArea() {
         ResponseEntity<Map> response = restTemplate.exchange(
-                deleteUrl(UUID.randomUUID(), 1), HttpMethod.DELETE, null, Map.class);
+                deleteUrl(UUID.randomUUID(), 1), HttpMethod.DELETE,
+                new HttpEntity<>(null, authHeaders()), Map.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
         assertThat(response.getBody().get("code")).isEqualTo("AREA_NOT_FOUND");
@@ -229,7 +248,7 @@ class AreaDeleteRestoreIntegrationTest {
 
         ResponseEntity<Map> response = restTemplate.exchange(
                 "/workspaces/" + otherWorkspace + "/areas/" + areaId + "?expectedVersion=1",
-                HttpMethod.DELETE, null, Map.class);
+                HttpMethod.DELETE, new HttpEntity<>(null, authHeaders()), Map.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
         assertThat(response.getBody().get("code")).isEqualTo("AREA_NOT_FOUND");
@@ -241,7 +260,8 @@ class AreaDeleteRestoreIntegrationTest {
         doDelete(areaId, 1); // succeeds, currentVersion becomes 2, status=DELETED
 
         ResponseEntity<Map> response = restTemplate.exchange(
-                deleteUrl(areaId, 2), HttpMethod.DELETE, null, Map.class);
+                deleteUrl(areaId, 2), HttpMethod.DELETE,
+                new HttpEntity<>(null, authHeaders()), Map.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
         assertThat(response.getBody().get("code")).isEqualTo("AREA_DELETED");
@@ -251,7 +271,7 @@ class AreaDeleteRestoreIntegrationTest {
     void deleteArea_returns404ForUnknownWorkspace() {
         ResponseEntity<Map> response = restTemplate.exchange(
                 "/workspaces/" + UUID.randomUUID() + "/areas/" + UUID.randomUUID() + "?expectedVersion=1",
-                HttpMethod.DELETE, null, Map.class);
+                HttpMethod.DELETE, new HttpEntity<>(null, authHeaders()), Map.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
         assertThat(response.getBody().get("code")).isEqualTo("WORKSPACE_NOT_FOUND");
@@ -262,7 +282,8 @@ class AreaDeleteRestoreIntegrationTest {
         UUID areaId = createArea();
 
         ResponseEntity<Map> response = restTemplate.exchange(
-                areaUrl(areaId), HttpMethod.DELETE, null, Map.class);
+                areaUrl(areaId), HttpMethod.DELETE,
+                new HttpEntity<>(null, authHeaders()), Map.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
         assertThat(response.getBody().get("code")).isEqualTo("INVALID_REQUEST");
@@ -291,7 +312,8 @@ class AreaDeleteRestoreIntegrationTest {
                     return;
                 }
                 ResponseEntity<Map> response = restTemplate.exchange(
-                        deleteUrl(areaId, 1), HttpMethod.DELETE, null, Map.class);
+                        deleteUrl(areaId, 1), HttpMethod.DELETE,
+                        new HttpEntity<>(null, authHeaders()), Map.class);
                 if (response.getStatusCode() == HttpStatus.OK) {
                     successCount.incrementAndGet();
                 } else if (response.getStatusCode() == HttpStatus.CONFLICT) {
@@ -368,7 +390,8 @@ class AreaDeleteRestoreIntegrationTest {
         UUID areaId = createArea("Original", squarePolygon());
         restTemplate.exchange(
                 areaUrl(areaId), HttpMethod.PUT,
-                new HttpEntity<>(new UpdateAreaRequest(1, "Modified", altPolygon())), AreaResponse.class);
+                new HttpEntity<>(new UpdateAreaRequest(1, "Modified", altPolygon()), authHeaders()),
+                AreaResponse.class);
         // now v1=squarePolygon/"Original", v2=altPolygon/"Modified"
 
         ResponseEntity<AreaResponse> response = doRestore(areaId, 1, 2); // restore v1
@@ -377,7 +400,6 @@ class AreaDeleteRestoreIntegrationTest {
         AreaResponse body = response.getBody();
         assertThat(body.name()).isEqualTo("Original");
         assertThat(body.currentVersion()).isEqualTo(3);
-        // area_km2 should match the squarePolygon, not altPolygon
         assertThat(body.areaKm2()).isPositive();
     }
 
@@ -387,7 +409,7 @@ class AreaDeleteRestoreIntegrationTest {
 
         ResponseEntity<Map> response = restTemplate.exchange(
                 restoreUrl(areaId, 1), HttpMethod.POST,
-                new HttpEntity<>(new RestoreAreaRequest(99)), Map.class);
+                new HttpEntity<>(new RestoreAreaRequest(99), authHeaders()), Map.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
         assertThat(response.getBody().get("code")).isEqualTo("VERSION_CONFLICT");
@@ -399,7 +421,7 @@ class AreaDeleteRestoreIntegrationTest {
 
         ResponseEntity<Map> response = restTemplate.exchange(
                 restoreUrl(areaId, 999), HttpMethod.POST,
-                new HttpEntity<>(new RestoreAreaRequest(1)), Map.class);
+                new HttpEntity<>(new RestoreAreaRequest(1), authHeaders()), Map.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
         assertThat(response.getBody().get("code")).isEqualTo("AREA_VERSION_NOT_FOUND");
@@ -409,7 +431,7 @@ class AreaDeleteRestoreIntegrationTest {
     void restoreArea_returns404ForUnknownArea() {
         ResponseEntity<Map> response = restTemplate.exchange(
                 "/workspaces/" + workspaceId + "/areas/" + UUID.randomUUID() + "/versions/1/restore",
-                HttpMethod.POST, new HttpEntity<>(new RestoreAreaRequest(1)), Map.class);
+                HttpMethod.POST, new HttpEntity<>(new RestoreAreaRequest(1), authHeaders()), Map.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
         assertThat(response.getBody().get("code")).isEqualTo("AREA_VERSION_NOT_FOUND");
@@ -438,7 +460,7 @@ class AreaDeleteRestoreIntegrationTest {
 
         ResponseEntity<Map> response = restTemplate.exchange(
                 restoreUrl(areaId, 1), HttpMethod.POST,
-                new HttpEntity<>(new RestoreAreaRequest(null)), Map.class);
+                new HttpEntity<>(new RestoreAreaRequest(null), authHeaders()), Map.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
         assertThat(response.getBody().get("code")).isEqualTo("INVALID_REQUEST");

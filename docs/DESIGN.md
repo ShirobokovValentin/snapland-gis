@@ -142,6 +142,8 @@ expose health endpoints. Error logging and monitoring must be provided.
 
 > **Prototype Implementation Note:** Esri World Imagery is used as the temporary satellite imagery provider for the prototype. GovMap remains the target provider from the requirements. The temporary provider configuration is isolated from application GIS state and business logic so that replacing the base-map integration later has minimal impact on Area functionality. GovMap integration research is documented in `docs/research/GOVMAP_SATELLITE_RESEARCH.md`.
 
+> **Prototype Authentication Note:** The full architecture places authentication at the API Gateway (an external IdP issues JWTs; the Gateway validates them before forwarding requests). In this prototype there is no API Gateway, so the GIS API Service acts directly as a JWT Resource Server: it validates and consumes every incoming JWT itself using Spring Security OAuth2 Resource Server. The GIS API Service does not trust or blindly forward identity asserted by any intermediary — it validates the JWT signature and claims on every request. A `DevTokenController` (active only under the `dev` Spring profile) issues JWTs for the seeded dev user without credential verification; it is development scaffolding and must not be deployed to production. WebSocket connection authentication is deferred to a subsequent security task.
+
 ## Domain Entities
 
 User --- System user {id, name, email, created_at}

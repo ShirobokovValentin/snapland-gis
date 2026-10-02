@@ -12,10 +12,12 @@ import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.boot.test.web.server.LocalServerPort;
 import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -46,7 +48,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Testcontainers
-@ActiveProfiles("dev")
+@ActiveProfiles("test")
 class AreaWebSocketIntegrationTest {
 
     @Container
@@ -78,6 +80,10 @@ class AreaWebSocketIntegrationTest {
     @Autowired
     private ObjectMapper objectMapper;
 
+    @Value("${app.auth.jwt-secret}")
+    private String jwtSecret;
+
+    private String devToken;
     private UUID workspaceId;
     private WebSocketStompClient stompClient;
     private StompSession stompSession;
@@ -85,6 +91,7 @@ class AreaWebSocketIntegrationTest {
     @BeforeEach
     void setUp() {
         workspaceId = devProperties.workspaceId();
+        devToken = TestJwtUtil.generateToken(jwtSecret, devProperties.userId());
         jdbcTemplate.update("DELETE FROM area_version");
         jdbcTemplate.update("DELETE FROM area");
 
@@ -103,6 +110,12 @@ class AreaWebSocketIntegrationTest {
     }
 
     // --- helpers ---
+
+    private HttpHeaders authHeaders() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(devToken);
+        return headers;
+    }
 
     private StompSession connect() throws Exception {
         String url = "ws://localhost:" + port + "/ws";
@@ -147,8 +160,10 @@ class AreaWebSocketIntegrationTest {
     }
 
     private UUID createArea() {
-        ResponseEntity<AreaResponse> response = restTemplate.postForEntity(
-                areasUrl(), new CreateAreaRequest("Test", squarePolygon()), AreaResponse.class);
+        ResponseEntity<AreaResponse> response = restTemplate.exchange(
+                areasUrl(), HttpMethod.POST,
+                new HttpEntity<>(new CreateAreaRequest("Test", squarePolygon()), authHeaders()),
+                AreaResponse.class);
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         return response.getBody().id();
     }
@@ -185,9 +200,8 @@ class AreaWebSocketIntegrationTest {
         BlockingQueue<AreaEventMessage> queue = subscribeToWorkspace(connect());
 
         restTemplate.exchange(
-                areasUrl() + "/" + areaId,
-                HttpMethod.PUT,
-                new HttpEntity<>(new UpdateAreaRequest(1, "Updated", squarePolygon())),
+                areasUrl() + "/" + areaId, HttpMethod.PUT,
+                new HttpEntity<>(new UpdateAreaRequest(1, "Updated", squarePolygon()), authHeaders()),
                 AreaResponse.class);
 
         AreaEventMessage event = queue.poll(5, TimeUnit.SECONDS);
@@ -209,7 +223,7 @@ class AreaWebSocketIntegrationTest {
 
         restTemplate.exchange(
                 areasUrl() + "/" + areaId + "?expectedVersion=1",
-                HttpMethod.DELETE, null, AreaResponse.class);
+                HttpMethod.DELETE, new HttpEntity<>(null, authHeaders()), AreaResponse.class);
 
         AreaEventMessage event = queue.poll(5, TimeUnit.SECONDS);
 
@@ -229,14 +243,13 @@ class AreaWebSocketIntegrationTest {
         // delete to version 2, then restore from version 1
         restTemplate.exchange(
                 areasUrl() + "/" + areaId + "?expectedVersion=1",
-                HttpMethod.DELETE, null, AreaResponse.class);
+                HttpMethod.DELETE, new HttpEntity<>(null, authHeaders()), AreaResponse.class);
 
         BlockingQueue<AreaEventMessage> queue = subscribeToWorkspace(connect());
 
         restTemplate.exchange(
-                areasUrl() + "/" + areaId + "/versions/1/restore",
-                HttpMethod.POST,
-                new HttpEntity<>(new RestoreAreaRequest(2)),
+                areasUrl() + "/" + areaId + "/versions/1/restore", HttpMethod.POST,
+                new HttpEntity<>(new RestoreAreaRequest(2), authHeaders()),
                 AreaResponse.class);
 
         AreaEventMessage event = queue.poll(5, TimeUnit.SECONDS);
@@ -263,9 +276,9 @@ class AreaWebSocketIntegrationTest {
         BlockingQueue<AreaEventMessage> queue = subscribeToWorkspace(connect());
 
         // trigger a mutation in the other workspace
-        restTemplate.postForEntity(
-                "/workspaces/" + otherWorkspaceId + "/areas",
-                new CreateAreaRequest("Other Area", squarePolygon()),
+        restTemplate.exchange(
+                "/workspaces/" + otherWorkspaceId + "/areas", HttpMethod.POST,
+                new HttpEntity<>(new CreateAreaRequest("Other Area", squarePolygon()), authHeaders()),
                 AreaResponse.class);
 
         // assert no event arrives on the dev workspace topic
@@ -281,9 +294,9 @@ class AreaWebSocketIntegrationTest {
         List<List<Double>> ring = List.of(
                 List.of(0.0, 0.0), List.of(2.0, 2.0), List.of(2.0, 0.0),
                 List.of(0.0, 2.0), List.of(0.0, 0.0));
-        restTemplate.postForEntity(
-                areasUrl(),
-                new CreateAreaRequest("Bad", new GeoJsonGeometry("Polygon", List.of(ring))),
+        restTemplate.exchange(
+                areasUrl(), HttpMethod.POST,
+                new HttpEntity<>(new CreateAreaRequest("Bad", new GeoJsonGeometry("Polygon", List.of(ring))), authHeaders()),
                 Object.class);
 
         AreaEventMessage event = queue.poll(2, TimeUnit.SECONDS);
@@ -297,9 +310,8 @@ class AreaWebSocketIntegrationTest {
 
         // stale expectedVersion — rejected by OCC, transaction rolled back
         restTemplate.exchange(
-                areasUrl() + "/" + areaId,
-                HttpMethod.PUT,
-                new HttpEntity<>(new UpdateAreaRequest(99, "Stale", squarePolygon())),
+                areasUrl() + "/" + areaId, HttpMethod.PUT,
+                new HttpEntity<>(new UpdateAreaRequest(99, "Stale", squarePolygon()), authHeaders()),
                 Object.class);
 
         AreaEventMessage event = queue.poll(2, TimeUnit.SECONDS);

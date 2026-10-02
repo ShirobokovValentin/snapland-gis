@@ -10,9 +10,11 @@ import com.snapland.gis.dev.DevProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.boot.test.context.SpringBootTest;
 import org.springframework.boot.test.web.client.TestRestTemplate;
 import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpMethod;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
@@ -38,7 +40,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
 @Testcontainers
-@ActiveProfiles("dev")
+@ActiveProfiles("test")
 class AreaUpdateIntegrationTest {
 
     @Container
@@ -70,16 +72,27 @@ class AreaUpdateIntegrationTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
+    @Value("${app.auth.jwt-secret}")
+    private String jwtSecret;
+
+    private String devToken;
     private UUID workspaceId;
 
     @BeforeEach
     void cleanAreas() {
         workspaceId = devProperties.workspaceId();
+        devToken = TestJwtUtil.generateToken(jwtSecret, devProperties.userId());
         jdbcTemplate.update("DELETE FROM area_version");
         jdbcTemplate.update("DELETE FROM area");
     }
 
     // --- helpers ---
+
+    private HttpHeaders authHeaders() {
+        HttpHeaders headers = new HttpHeaders();
+        headers.setBearerAuth(devToken);
+        return headers;
+    }
 
     private GeoJsonGeometry squarePolygon() {
         List<List<Double>> ring = List.of(
@@ -110,15 +123,18 @@ class AreaUpdateIntegrationTest {
     }
 
     private UUID createArea() {
-        ResponseEntity<AreaResponse> response = restTemplate.postForEntity(
-                areasUrl(), new CreateAreaRequest("Initial", squarePolygon()), AreaResponse.class);
+        ResponseEntity<AreaResponse> response = restTemplate.exchange(
+                areasUrl(), HttpMethod.POST,
+                new HttpEntity<>(new CreateAreaRequest("Initial", squarePolygon()), authHeaders()),
+                AreaResponse.class);
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         return response.getBody().id();
     }
 
     private ResponseEntity<AreaResponse> doUpdate(UUID areaId, UpdateAreaRequest request) {
         return restTemplate.exchange(
-                areaUrl(areaId), HttpMethod.PUT, new HttpEntity<>(request), AreaResponse.class);
+                areaUrl(areaId), HttpMethod.PUT,
+                new HttpEntity<>(request, authHeaders()), AreaResponse.class);
     }
 
     // --- update tests ---
@@ -175,7 +191,7 @@ class AreaUpdateIntegrationTest {
 
         ResponseEntity<Map> response = restTemplate.exchange(
                 areaUrl(areaId), HttpMethod.PUT,
-                new HttpEntity<>(new UpdateAreaRequest(1, "Conflict", squarePolygon())),
+                new HttpEntity<>(new UpdateAreaRequest(1, "Conflict", squarePolygon()), authHeaders()),
                 Map.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
@@ -192,7 +208,7 @@ class AreaUpdateIntegrationTest {
 
         ResponseEntity<Map> response = restTemplate.exchange(
                 areaUrl(areaId), HttpMethod.PUT,
-                new HttpEntity<>(new UpdateAreaRequest(1, "Conflict", squarePolygon())),
+                new HttpEntity<>(new UpdateAreaRequest(1, "Conflict", squarePolygon()), authHeaders()),
                 Map.class);
 
         Map<?, ?> details = (Map<?, ?>) response.getBody().get("details");
@@ -203,7 +219,7 @@ class AreaUpdateIntegrationTest {
     void updateArea_returns404ForUnknownArea() {
         ResponseEntity<Map> response = restTemplate.exchange(
                 areaUrl(UUID.randomUUID()), HttpMethod.PUT,
-                new HttpEntity<>(new UpdateAreaRequest(1, "X", squarePolygon())),
+                new HttpEntity<>(new UpdateAreaRequest(1, "X", squarePolygon()), authHeaders()),
                 Map.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
@@ -222,7 +238,7 @@ class AreaUpdateIntegrationTest {
 
         ResponseEntity<Map> response = restTemplate.exchange(
                 "/workspaces/" + otherWorkspace + "/areas/" + areaId, HttpMethod.PUT,
-                new HttpEntity<>(new UpdateAreaRequest(1, "X", squarePolygon())),
+                new HttpEntity<>(new UpdateAreaRequest(1, "X", squarePolygon()), authHeaders()),
                 Map.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
@@ -236,7 +252,7 @@ class AreaUpdateIntegrationTest {
 
         ResponseEntity<Map> response = restTemplate.exchange(
                 areaUrl(areaId), HttpMethod.PUT,
-                new HttpEntity<>(new UpdateAreaRequest(1, "X", squarePolygon())),
+                new HttpEntity<>(new UpdateAreaRequest(1, "X", squarePolygon()), authHeaders()),
                 Map.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CONFLICT);
@@ -247,7 +263,7 @@ class AreaUpdateIntegrationTest {
     void updateArea_returns404ForUnknownWorkspace() {
         ResponseEntity<Map> response = restTemplate.exchange(
                 "/workspaces/" + UUID.randomUUID() + "/areas/" + UUID.randomUUID(), HttpMethod.PUT,
-                new HttpEntity<>(new UpdateAreaRequest(1, "X", squarePolygon())),
+                new HttpEntity<>(new UpdateAreaRequest(1, "X", squarePolygon()), authHeaders()),
                 Map.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.NOT_FOUND);
@@ -260,7 +276,7 @@ class AreaUpdateIntegrationTest {
 
         ResponseEntity<Map> response = restTemplate.exchange(
                 areaUrl(areaId), HttpMethod.PUT,
-                new HttpEntity<>(new UpdateAreaRequest(1, "", squarePolygon())),
+                new HttpEntity<>(new UpdateAreaRequest(1, "", squarePolygon()), authHeaders()),
                 Map.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
@@ -276,7 +292,7 @@ class AreaUpdateIntegrationTest {
 
         ResponseEntity<Map> response = restTemplate.exchange(
                 areaUrl(areaId), HttpMethod.PUT,
-                new HttpEntity<>(new UpdateAreaRequest(1, "Bad", new GeoJsonGeometry("Polygon", List.of(bowtie)))),
+                new HttpEntity<>(new UpdateAreaRequest(1, "Bad", new GeoJsonGeometry("Polygon", List.of(bowtie))), authHeaders()),
                 Map.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
@@ -290,7 +306,7 @@ class AreaUpdateIntegrationTest {
 
         ResponseEntity<Map> response = restTemplate.exchange(
                 areaUrl(areaId), HttpMethod.PUT,
-                new HttpEntity<>(new UpdateAreaRequest(null, "Name", squarePolygon())),
+                new HttpEntity<>(new UpdateAreaRequest(null, "Name", squarePolygon()), authHeaders()),
                 Map.class);
 
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.BAD_REQUEST);
@@ -322,7 +338,7 @@ class AreaUpdateIntegrationTest {
                 }
                 ResponseEntity<Map> response = restTemplate.exchange(
                         areaUrl(areaId), HttpMethod.PUT,
-                        new HttpEntity<>(new UpdateAreaRequest(1, "Thread-" + idx, altPolygon())),
+                        new HttpEntity<>(new UpdateAreaRequest(1, "Thread-" + idx, altPolygon()), authHeaders()),
                         Map.class);
                 if (response.getStatusCode() == HttpStatus.OK) {
                     successCount.incrementAndGet();

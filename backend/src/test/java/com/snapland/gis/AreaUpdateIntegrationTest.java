@@ -6,6 +6,7 @@ import com.snapland.gis.area.dto.AreaResponse;
 import com.snapland.gis.area.dto.CreateAreaRequest;
 import com.snapland.gis.area.dto.GeoJsonGeometry;
 import com.snapland.gis.area.dto.UpdateAreaRequest;
+import com.snapland.gis.config.PrototypeProperties;
 import com.snapland.gis.dev.DevProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
@@ -64,6 +65,9 @@ class AreaUpdateIntegrationTest {
     private DevProperties devProperties;
 
     @Autowired
+    private PrototypeProperties prototypeProperties;
+
+    @Autowired
     private AreaRepository areaRepository;
 
     @Autowired
@@ -80,7 +84,7 @@ class AreaUpdateIntegrationTest {
 
     @BeforeEach
     void cleanAreas() {
-        workspaceId = devProperties.workspaceId();
+        workspaceId = prototypeProperties.workspaceId();
         devToken = TestJwtUtil.generateToken(jwtSecret, devProperties.userId());
         jdbcTemplate.update("DELETE FROM area_version");
         jdbcTemplate.update("DELETE FROM area");

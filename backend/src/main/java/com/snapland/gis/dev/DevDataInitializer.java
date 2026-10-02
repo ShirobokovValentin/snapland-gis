@@ -1,5 +1,6 @@
 package com.snapland.gis.dev;
 
+import com.snapland.gis.config.PrototypeProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
@@ -20,10 +21,13 @@ class DevDataInitializer implements ApplicationRunner {
     private static final Logger log = LoggerFactory.getLogger(DevDataInitializer.class);
 
     private final DevProperties devProperties;
+    private final PrototypeProperties prototypeProperties;
     private final JdbcTemplate jdbcTemplate;
 
-    DevDataInitializer(DevProperties devProperties, JdbcTemplate jdbcTemplate) {
+    DevDataInitializer(DevProperties devProperties, PrototypeProperties prototypeProperties,
+                       JdbcTemplate jdbcTemplate) {
         this.devProperties = devProperties;
+        this.prototypeProperties = prototypeProperties;
         this.jdbcTemplate = jdbcTemplate;
     }
 
@@ -31,7 +35,7 @@ class DevDataInitializer implements ApplicationRunner {
     @Transactional
     public void run(ApplicationArguments args) {
         String userId = devProperties.userId().toString();
-        String workspaceId = devProperties.workspaceId().toString();
+        String workspaceId = prototypeProperties.workspaceId().toString();
 
         jdbcTemplate.update("""
                 INSERT INTO users (id, name, email, created_at)

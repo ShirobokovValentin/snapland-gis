@@ -24,6 +24,9 @@ app:
   auth:
     jwt-secret: ${JWT_SECRET}
     jwt-expiration: PT24H
+    jwt-issuer: snapland
+  prototype:
+    workspace-id: ${PROTOTYPE_WORKSPACE_ID}
 
 management:
   endpoints:

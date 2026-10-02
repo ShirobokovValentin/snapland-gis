@@ -1,0 +1,51 @@
+<div class="auth-container">
+  <div class="auth-card">
+    <h1>Snapland GIS</h1>
+    <h2>{{ mode === 'login' ? 'Sign in' : 'Create account' }}</h2>
+
+    <form (ngSubmit)="submit()" #authForm="ngForm">
+      @if (mode === 'register') {
+        <div class="field">
+          <label for="name">Name</label>
+          <input
+            id="name"
+            name="name"
+            type="text"
+            [(ngModel)]="name"
+            required
+            autocomplete="name"
+            [disabled]="loading"
+          />
+        </div>
+      }
+
+      <div class="field">
+        <label for="email">Email</label>
+        <input
+          id="email"
+          name="email"
+          type="email"
+          [(ngModel)]="email"
+          required
+          autocomplete="email"
+          [disabled]="loading"
+        />
+      </div>
+
+      @if (error) {
+        <p class="error">{{ error }}</p>
+      }
+
+      <button type="submit" [disabled]="loading">
+        {{ loading ? 'Please wait…' : (mode === 'login' ? 'Sign in' : 'Create account') }}
+      </button>
+    </form>
+
+    <p class="switch">
+      {{ mode === 'login' ? 'No account yet?' : 'Already have an account?' }}
+      <button type="button" class="link-btn" (click)="switchMode()">
+        {{ mode === 'login' ? 'Create one' : 'Sign in' }}
+      </button>
+    </p>
+  </div>
+</div>

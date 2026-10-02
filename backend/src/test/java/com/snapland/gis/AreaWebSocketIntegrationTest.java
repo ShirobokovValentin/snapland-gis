@@ -6,6 +6,7 @@ import com.snapland.gis.area.dto.CreateAreaRequest;
 import com.snapland.gis.area.dto.GeoJsonGeometry;
 import com.snapland.gis.area.dto.RestoreAreaRequest;
 import com.snapland.gis.area.dto.UpdateAreaRequest;
+import com.snapland.gis.config.PrototypeProperties;
 import com.snapland.gis.dev.DevProperties;
 import com.snapland.gis.realtime.AreaEventMessage;
 import org.junit.jupiter.api.AfterEach;
@@ -77,6 +78,9 @@ class AreaWebSocketIntegrationTest {
     private DevProperties devProperties;
 
     @Autowired
+    private PrototypeProperties prototypeProperties;
+
+    @Autowired
     private JdbcTemplate jdbcTemplate;
 
     @Autowired
@@ -92,7 +96,7 @@ class AreaWebSocketIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        workspaceId = devProperties.workspaceId();
+        workspaceId = prototypeProperties.workspaceId();
         devToken = TestJwtUtil.generateToken(jwtSecret, devProperties.userId());
         jdbcTemplate.update("DELETE FROM area_version");
         jdbcTemplate.update("DELETE FROM area");

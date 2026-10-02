@@ -5,6 +5,7 @@ import org.springframework.security.oauth2.jose.jws.MacAlgorithm;
 import org.springframework.security.oauth2.jwt.JwsHeader;
 import org.springframework.security.oauth2.jwt.JwtClaimsSet;
 import org.springframework.security.oauth2.jwt.JwtEncoderParameters;
+import org.springframework.security.oauth2.jwt.NimbusJwtDecoder;
 import org.springframework.security.oauth2.jwt.NimbusJwtEncoder;
 
 import javax.crypto.spec.SecretKeySpec;
@@ -13,7 +14,7 @@ import java.time.Instant;
 import java.util.UUID;
 
 /**
- * Test-only utility that generates signed JWTs accepted by the application's
+ * Test-only utility that generates and decodes signed JWTs for the application's
  * configured JwtDecoder. Does not depend on any Spring bean or profile.
  */
 public final class TestJwtUtil {
@@ -31,12 +32,19 @@ public final class TestJwtUtil {
         return build(jwtSecret, userId, expiresAt.minusSeconds(3600), expiresAt);
     }
 
+    public static String extractSubject(String jwtSecret, String token) {
+        SecretKeySpec key = new SecretKeySpec(
+            jwtSecret.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
+        return NimbusJwtDecoder.withSecretKey(key).macAlgorithm(MacAlgorithm.HS256).build()
+            .decode(token).getSubject();
+    }
+
     private static String build(String jwtSecret, UUID userId, Instant issuedAt, Instant expiresAt) {
         SecretKeySpec key = new SecretKeySpec(
             jwtSecret.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
         NimbusJwtEncoder encoder = new NimbusJwtEncoder(new ImmutableSecret<>(key));
         JwtClaimsSet claims = JwtClaimsSet.builder()
-            .issuer("snapland-dev")
+            .issuer("snapland")
             .subject(userId.toString())
             .issuedAt(issuedAt)
             .expiresAt(expiresAt)

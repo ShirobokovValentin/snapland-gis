@@ -4,6 +4,7 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.snapland.gis.area.dto.AreaResponse;
 import com.snapland.gis.area.dto.CreateAreaRequest;
 import com.snapland.gis.area.dto.GeoJsonGeometry;
+import com.snapland.gis.config.PrototypeProperties;
 import com.snapland.gis.dev.DevProperties;
 import com.snapland.gis.realtime.AreaEventMessage;
 import com.snapland.gis.realtime.JwtChannelInterceptor;
@@ -84,6 +85,9 @@ class AreaWebSocketAuthIntegrationTest {
     private DevProperties devProperties;
 
     @Autowired
+    private PrototypeProperties prototypeProperties;
+
+    @Autowired
     private JdbcTemplate jdbcTemplate;
 
     @Autowired
@@ -102,7 +106,7 @@ class AreaWebSocketAuthIntegrationTest {
 
     @BeforeEach
     void setUp() {
-        workspaceId = devProperties.workspaceId();
+        workspaceId = prototypeProperties.workspaceId();
         devToken = TestJwtUtil.generateToken(jwtSecret, devProperties.userId());
         jdbcTemplate.update("DELETE FROM area_version");
         jdbcTemplate.update("DELETE FROM area");

@@ -17,7 +17,7 @@ import java.nio.charset.StandardCharsets;
 
 @Configuration
 @EnableWebSecurity
-@EnableConfigurationProperties(JwtProperties.class)
+@EnableConfigurationProperties({JwtProperties.class, PrototypeProperties.class})
 public class SecurityConfig {
 
     @Bean
@@ -28,6 +28,7 @@ public class SecurityConfig {
                 .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/actuator/health").permitAll()
+                .requestMatchers("/auth/**").permitAll()
                 .requestMatchers("/dev/token").permitAll()
                 .requestMatchers("/ws/**").permitAll()
                 .anyRequest().authenticated())

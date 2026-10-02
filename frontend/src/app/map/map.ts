@@ -13,6 +13,8 @@ import 'leaflet-draw';
 import { AreaService } from '../area/area.service';
 import { Area, AreaEventMessage, AreaVersionResponse } from '../area/area.model';
 import { RealtimeService } from '../realtime/realtime.service';
+import { AuthService } from '../auth/auth.service';
+import { Router } from '@angular/router';
 import { environment } from '../../environments/environment';
 
 // Temporary satellite provider: Esri World Imagery.
@@ -76,6 +78,8 @@ export class MapComponent implements AfterViewInit, OnDestroy {
   constructor(
     private areaService: AreaService,
     private realtimeService: RealtimeService,
+    private authService: AuthService,
+    private router: Router,
     private cdr: ChangeDetectorRef,
   ) {}
 
@@ -311,6 +315,12 @@ export class MapComponent implements AfterViewInit, OnDestroy {
         }
       },
     });
+  }
+
+  logout(): void {
+    this.realtimeService.disconnect();
+    this.authService.logout();
+    this.router.navigate(['/auth']);
   }
 
   switchBaseMap(mode: 'map' | 'satellite'): void {

@@ -4,6 +4,8 @@ import com.snapland.gis.common.exception.AreaDeletedException;
 import com.snapland.gis.common.exception.AreaNotFoundException;
 import com.snapland.gis.common.exception.AreaVersionNotFoundException;
 import com.snapland.gis.common.exception.InvalidGeometryException;
+import com.snapland.gis.common.exception.UserAlreadyExistsException;
+import com.snapland.gis.common.exception.UserNotFoundException;
 import com.snapland.gis.common.exception.VersionConflictException;
 import com.snapland.gis.common.exception.WorkspaceNotFoundException;
 import org.slf4j.Logger;
@@ -79,6 +81,18 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> handleMissingServletRequestParameter(MissingServletRequestParameterException ex) {
         return ResponseEntity.status(HttpStatus.BAD_REQUEST)
                 .body(ApiError.of("INVALID_REQUEST", ex.getMessage(), traceId()));
+    }
+
+    @ExceptionHandler(UserAlreadyExistsException.class)
+    public ResponseEntity<ApiError> handleUserAlreadyExists(UserAlreadyExistsException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiError.of("USER_ALREADY_EXISTS", ex.getMessage(), traceId()));
+    }
+
+    @ExceptionHandler(UserNotFoundException.class)
+    public ResponseEntity<ApiError> handleUserNotFound(UserNotFoundException ex) {
+        return ResponseEntity.status(HttpStatus.NOT_FOUND)
+                .body(ApiError.of("USER_NOT_FOUND", ex.getMessage(), traceId()));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)

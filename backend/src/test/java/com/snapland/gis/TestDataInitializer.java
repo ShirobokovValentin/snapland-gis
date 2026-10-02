@@ -1,5 +1,6 @@
 package com.snapland.gis;
 
+import com.snapland.gis.config.PrototypeProperties;
 import com.snapland.gis.dev.DevProperties;
 import org.springframework.boot.ApplicationArguments;
 import org.springframework.boot.ApplicationRunner;
@@ -13,10 +14,13 @@ import org.springframework.transaction.annotation.Transactional;
 class TestDataInitializer implements ApplicationRunner {
 
     private final DevProperties devProperties;
+    private final PrototypeProperties prototypeProperties;
     private final JdbcTemplate jdbcTemplate;
 
-    TestDataInitializer(DevProperties devProperties, JdbcTemplate jdbcTemplate) {
+    TestDataInitializer(DevProperties devProperties, PrototypeProperties prototypeProperties,
+                        JdbcTemplate jdbcTemplate) {
         this.devProperties = devProperties;
+        this.prototypeProperties = prototypeProperties;
         this.jdbcTemplate = jdbcTemplate;
     }
 
@@ -24,7 +28,7 @@ class TestDataInitializer implements ApplicationRunner {
     @Transactional
     public void run(ApplicationArguments args) {
         String userId = devProperties.userId().toString();
-        String workspaceId = devProperties.workspaceId().toString();
+        String workspaceId = prototypeProperties.workspaceId().toString();
 
         jdbcTemplate.update("""
                 INSERT INTO users (id, name, email, created_at)

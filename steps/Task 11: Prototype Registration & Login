@@ -1,0 +1,125 @@
+---
+Task 11 Pre-Implementation Report: Prototype Registration & Login
+
+---
+1. Current state
+
+User schema (V2__core_schema.sql)
+- users(id UUID PK, name VARCHAR NOT NULL, email VARCHAR NOT NULL UNIQUE, created_at TIMESTAMPTZ)
+- Email uniqueness is already enforced at the database level (uq_users_email).
+- There is no password_hash column, and none will be added.
+- Email is stored without normalization in the current seeded data (dev@snapland.local, test@snapland.local).
+
+WorkspaceMember schema
+- workspace_member(id, workspace_id FK, user_id FK, role CHECK('OWNER','EDITOR','VIEWER'), UNIQUE(workspace_id, user_id))
+- The relationship already exists and is the correct model to reuse.
+
+DevProperties
+- Binds app.dev.user-id and app.dev.workspace-id — a deterministic UUID pair that identifies the single seeded dev/test workspace. This is the existing configuration mechanism the prototype already uses to name the shared workspace.
+
+DevDataInitializer / TestDataInitializer
+- Both seed one user + one workspace + one OWNER membership using ON CONFLICT ... DO NOTHING. The workspace UUID comes from DevProperties.
+
+Current dev token flow
+Angular APP_INITIALIZER
+    → POST /api/dev/token
+    → JWT for fixed dev userId
+    → stored in localStorage as "snapland_dev_token"
+    → REST interceptor attaches Bearer header
+    → RealtimeService reads token for STOMP connectHeaders
+This is invisible to the user and supports only the one seeded identity.
+
+DevTokenController
+- @Profile("dev"), POST /dev/token, no credential check, issues JWT for devProperties.userId().
+- Creates its own NimbusJwtEncoder inline using JwtProperties. Token issuance logic is duplicated relative to what registration/login will need.
+
+Frontend auth state
+- AuthService.bootstrap() automatically calls /dev/token when no token is in localStorage. This must stop being the normal browser flow.
+- authInterceptor attaches Authorization
+
+
+
+
+
+
+
+The Task 11 plan is approved with the following required corrections.
+
+1. JwtIssuer must no longer use "snapland-dev" as the issuer.
+
+Registration and login are now the normal prototype authentication path,
+not development-only token issuance.
+
+Move the issuer to authentication configuration, for example:
+
+app.auth.jwt-issuer: snapland
+
+JwtIssuer should use the configured issuer.
+
+Keep:
+    sub = User UUID
+
+The same JwtIssuer may still be used by DevTokenController.
+
+2. Do not make production-path AuthService depend on DevProperties.
+
+The shared prototype workspace is now part of the prototype application
+model, not development scaffolding.
+
+Replace the misleading:
+
+    app.dev.workspace-id
+
+dependency in registration logic with an explicit prototype/application
+configuration property, for example:
+
+    app.prototype.workspace-id
+
+Introduce an appropriately named configuration properties class such as
+PrototypeProperties.
+
+AuthService may depend on PrototypeProperties.
+
+DevDataInitializer and TestDataInitializer may also use the same configured
+prototype workspace ID where appropriate.
+
+Do not leave production registration dependent on a @Profile("dev") bean.
+
+3. The proposed frontend token guard behavior is acceptable for this MVP.
+
+The guard may check only whether a token exists.
+
+Document/confirm the resulting behavior:
+
+    expired token exists
+        -> /map may initially open
+        -> first protected REST request returns 401
+        -> interceptor clears token
+        -> navigate to /auth
+
+Do not add client-side JWT validation or refresh-token logic in this task.
+
+Everything else in the proposed plan is approved.
+
+Proceed with implementation.
+
+After implementation:
+
+1. Run the complete backend test suite.
+2. Run the frontend build.
+3. Report total tests and failures.
+4. Report the final register/login API contracts.
+5. Report the final configuration structure for:
+   - JWT issuer
+   - JWT secret
+   - prototype workspace ID
+6. Confirm AuthService has no dependency on DevProperties.
+7. Confirm Angular no longer calls /dev/token automatically.
+8. Confirm /dev/token remains dev-only convenience functionality.
+9. Confirm registration creates User + WorkspaceMember atomically.
+10. Confirm duplicate-email race is protected by the DB unique constraint.
+11. Provide the final Alice/Bob manual verification scenario.
+12. Report deviations from the approved plan.
+
+Do not start workspace authorization or any additional task.
+Stop after the implementation report.

@@ -1,0 +1,516 @@
+We are starting Task 04 — Area Update & Versioning.
+
+Task 01 — Project Bootstrap: complete.
+Task 02 — Database Schema & Core Domain: complete.
+Task 03 — First Working GIS Vertical Slice: complete.
+
+The current prototype supports:
+
+- Leaflet map
+- polygon drawing
+- Area creation
+- authoritative backend area calculation
+- Area + initial AreaVersion persistence
+- viewport-based Area retrieval
+- development bootstrap User/Workspace
+- black-box QA specification in docs/TEST_CASES.md
+
+Authoritative documentation:
+
+- CLAUDE.md
+- docs/REQUIREMENTS.md
+- docs/DESIGN.md
+- docs/TEST_CASES.md
+
+Before doing anything:
+
+1. Read CLAUDE.md.
+2. Read the relevant Area update, AreaVersion, optimistic concurrency,
+   transaction, API, error-contract, and frontend sections of
+   REQUIREMENTS.md and DESIGN.md.
+3. Inspect the existing Area implementation from Task 03.
+4. Inspect the existing Area and AreaVersion schema/entities.
+5. Inspect the current integration tests.
+6. Inspect TEST_CASES.md only to understand the current black-box
+   regression baseline.
+
+Do NOT modify any files yet.
+
+Produce an implementation plan for review.
+
+---
+
+## Goal
+
+Extend the working prototype so an existing Area can be edited and saved.
+
+After Task 04, a user should be able to:
+
+1. Load an existing Area.
+2. Select it on the map.
+3. Edit its polygon geometry.
+4. Optionally change its name.
+5. Save the changes.
+6. See the updated Area on the map.
+7. Refresh the browser and see the updated Area.
+8. Have every successful update recorded as a new AreaVersion.
+9. Receive a conflict response if attempting to update a stale version.
+
+The implementation must follow the versioning and optimistic concurrency
+model defined in DESIGN.md.
+
+---
+
+## Backend — Update Area
+
+Review DESIGN.md and use the exact documented update endpoint and contract.
+
+Do not invent a new endpoint if the design already defines one.
+
+The update flow should conceptually be:
+
+Request
+    ↓
+Find Area inside Workspace
+    ↓
+Validate expected version
+    ↓
+Validate new geometry/name
+    ↓
+Calculate authoritative areaKm2
+    ↓
+Update current Area
+    ↓
+Increment currentVersion
+    ↓
+Insert new AreaVersion
+    ↓
+Commit
+    ↓
+Return updated Area
+
+Area update and AreaVersion insertion must be atomic.
+
+Use one transaction for the mutation.
+
+---
+
+## Optimistic Concurrency Control
+
+Implement the OCC model defined in DESIGN.md.
+
+The client must send the version it believes it is updating.
+
+Conceptually:
+
+stored currentVersion = 3
+request expectedVersion = 3
+
+        ↓
+
+UPDATE succeeds
+currentVersion = 4
+AreaVersion(version=4, UPDATED)
+
+But:
+
+stored currentVersion = 4
+request expectedVersion = 3
+
+        ↓
+
+409 VERSION_CONFLICT
+
+Do not silently overwrite newer data.
+
+Do not implement last-write-wins.
+
+Review DESIGN.md carefully to determine whether concurrency protection is
+implemented through:
+
+- an explicit conditional UPDATE;
+- JPA optimistic locking;
+- another documented mechanism.
+
+Follow the design rather than inventing a different model.
+
+Explain the exact SQL/JPA concurrency behavior in the plan.
+
+---
+
+## Concurrent Requests
+
+The implementation must remain correct when two requests attempt to update
+the same Area from the same starting version.
+
+Example:
+
+Area.currentVersion = 5
+
+Request A expectedVersion=5
+Request B expectedVersion=5
+
+Exactly one request may successfully create version 6.
+
+The other request must receive:
+
+409 VERSION_CONFLICT
+
+There must never be two AreaVersion rows with:
+
+(area_id, version) = (same Area, 6)
+
+Explain how the existing database constraints participate in enforcing this
+invariant.
+
+---
+
+## AreaVersion
+
+On every successful update:
+
+Area.currentVersion = previousVersion + 1
+
+and create:
+
+AreaVersion
+    areaId = Area.id
+    version = Area.currentVersion
+    changeType = UPDATED
+    name = updated Area name
+    geometry = updated geometry
+    areaKm2 = updated authoritative area
+    changedBy = current prototype user
+    changedAt = current timestamp
+
+Use the exact existing schema/model names from the repository.
+
+Do not change the AreaVersion model unless required by DESIGN.md or the
+existing schema is insufficient.
+
+Do not implement history REST API yet unless it is strictly required for
+the update workflow.
+
+---
+
+## Geometry
+
+Apply the same geometry validation rules used by Area creation.
+
+Do not duplicate validation logic between create and update.
+
+The backend remains authoritative for areaKm2.
+
+If geometry changes:
+
+- validate the submitted Polygon;
+- calculate areaKm2 again using the existing PostGIS approach.
+
+If the update contract permits geometry to remain unchanged, explain how
+that is represented.
+
+Do not introduce support for interior rings if Task 03 intentionally
+rejects them.
+
+---
+
+## Name Updates
+
+Review the documented update contract and determine whether:
+
+- name and geometry are both required;
+- partial updates are allowed;
+- unchanged values must be resent.
+
+Follow DESIGN.md.
+
+Do not convert PUT into PATCH semantics unless the design explicitly
+requires partial updates.
+
+---
+
+## Workspace Boundary
+
+An Area must only be updated through its owning Workspace.
+
+A request such as:
+
+PUT /workspaces/A/areas/{areaId}
+
+must not update an Area belonging to Workspace B.
+
+Review DESIGN.md for the expected response semantics.
+
+Do not implement authentication/authorization yet.
+
+Workspace ownership boundary and user authorization are separate concerns.
+
+---
+
+## Prototype User
+
+Authentication remains out of scope.
+
+Continue using the existing development-only user mechanism from Task 03
+for changedBy.
+
+Do not introduce:
+
+- JWT;
+- OAuth;
+- X-User-Id;
+- CurrentUserProvider abstractions;
+- Workspace authorization;
+- role checks.
+
+Do not redesign the existing development bootstrap mechanism unless a
+concrete problem requires it.
+
+---
+
+## Error Handling
+
+Use the documented Error Contract.
+
+At minimum review behavior for:
+
+- Area not found;
+- Workspace not found;
+- invalid geometry;
+- invalid request;
+- version conflict.
+
+For VERSION_CONFLICT, follow DESIGN.md exactly.
+
+If the design defines error details such as:
+
+{
+  "currentVersion": ...,
+  "areaId": ...
+}
+
+implement those details rather than leaving the generic details object empty.
+
+Do not build error infrastructure for unrelated future operations.
+
+---
+
+## REST Response
+
+The successful update response should represent the new authoritative state.
+
+At minimum verify whether DESIGN.md requires:
+
+- id
+- workspaceId
+- name
+- geometry
+- areaKm2
+- status
+- currentVersion
+- updatedAt
+
+Reuse existing Area response DTOs where appropriate.
+
+Do not create duplicate DTO models unnecessarily.
+
+---
+
+## Frontend
+
+Extend the existing minimal Leaflet prototype.
+
+The user should be able to:
+
+1. Select an existing Area.
+2. Enter edit mode.
+3. Modify polygon geometry.
+4. Change the Area name if supported by the update contract.
+5. Save the changes.
+
+The frontend must send the Area's currentVersion with the update request.
+
+After successful update:
+
+- replace/update the displayed polygon using the authoritative backend
+  response;
+- store/use the returned currentVersion for subsequent edits.
+
+Keep UI minimal.
+
+Do not redesign the application.
+
+Do not introduce a frontend state-management framework solely for this task.
+
+---
+
+## Frontend Conflict Handling
+
+If the backend returns:
+
+409 VERSION_CONFLICT
+
+do not silently retry and overwrite.
+
+For the prototype, propose the smallest clear user-visible behavior.
+
+For example:
+
+- inform the user that the Area was modified elsewhere;
+- reload the authoritative Area state.
+
+Do not implement complex merge/conflict-resolution UI.
+
+The exact behavior must be proposed before implementation.
+
+---
+
+## Integration Tests
+
+Add meaningful backend integration tests.
+
+At minimum evaluate coverage for:
+
+1. successful update;
+2. currentVersion increments;
+3. AreaVersion UPDATED row is created;
+4. AreaVersion contains the new name/geometry/area;
+5. areaKm2 is recalculated after geometry change;
+6. stale expectedVersion returns 409;
+7. stale update does not modify Area;
+8. stale update does not create AreaVersion;
+9. Area cannot be updated through another Workspace;
+10. invalid geometry returns 400;
+11. nonexistent Area behavior;
+12. nonexistent Workspace behavior.
+
+Most importantly, include a real concurrency test:
+
+Starting state:
+
+currentVersion = N
+
+Two concurrent update requests both use:
+
+expectedVersion = N
+
+Expected:
+
+- exactly one succeeds;
+- exactly one receives VERSION_CONFLICT;
+- final currentVersion = N + 1;
+- exactly one AreaVersion exists for N + 1.
+
+Use the real PostgreSQL/PostGIS Testcontainers database for behavior where
+database concurrency matters.
+
+Do not mock the concurrency mechanism.
+
+---
+
+## QA Test Cases
+
+After implementation and verification, review docs/TEST_CASES.md.
+
+Propose additional black-box QA cases for the newly implemented Update/OCC
+functionality.
+
+Do NOT modify TEST_CASES.md during the planning phase.
+
+The likely new category is:
+
+Area Update
+
+and should include only meaningful external scenarios such as:
+
+- successful update;
+- persisted update after reload;
+- version increment;
+- stale version conflict;
+- invalid geometry;
+- workspace isolation;
+- UI edit-and-save workflow;
+- UI conflict behavior.
+
+Do not create excessive parameter combinations.
+
+---
+
+## Explicitly Out of Scope
+
+Do NOT implement in Task 04:
+
+- authentication;
+- authorization roles;
+- JWT;
+- OAuth;
+- Workspace management API;
+- delete Area;
+- restore Area;
+- Area history REST API unless required by the update flow;
+- WebSocket;
+- Redis Pub/Sub;
+- presence;
+- Transactional Outbox;
+- satellite mode;
+- caching;
+- rate limiting;
+- production deployment;
+- complex conflict merging;
+- UI redesign.
+
+---
+
+## Scope Discipline
+
+This task adds one mutation capability:
+
+UPDATE AREA
+
+with correct:
+
+- versioning;
+- optimistic concurrency;
+- AreaVersion history;
+- transaction semantics.
+
+Do not implement adjacent future features simply because the underlying
+model supports them.
+
+---
+
+## Required Planning Output
+
+Before modifying files, provide:
+
+1. Exact backend update flow.
+2. Exact REST endpoint and request/response contract from DESIGN.md.
+3. OCC implementation strategy.
+4. How the implementation guarantees only one concurrent update succeeds.
+5. Transaction boundary.
+6. AreaVersion creation behavior.
+7. Geometry validation/recalculation behavior.
+8. Workspace boundary behavior.
+9. Error mappings, especially VERSION_CONFLICT.
+10. Proposed frontend edit workflow.
+11. Proposed frontend conflict behavior.
+12. Repository changes.
+13. Backend files to create/modify.
+14. Frontend files to create/modify.
+15. Integration test plan.
+16. Real concurrent-update test strategy.
+17. Whether any Flyway migration is required.
+18. Whether any new Maven/npm dependencies are required.
+19. Proposed additions to TEST_CASES.md after implementation.
+20. Any discrepancies or ambiguities found in REQUIREMENTS.md or DESIGN.md.
+21. Decisions requiring approval.
+
+IMPORTANT:
+
+Do not create or modify any files yet.
+Do not stage files.
+Do not commit anything.
+Do not modify anything outside the repository.
+Do not install global packages or change machine configuration.
+
+Wait for explicit approval before implementation.

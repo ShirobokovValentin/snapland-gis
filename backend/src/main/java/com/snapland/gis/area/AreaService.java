@@ -3,7 +3,11 @@ package com.snapland.gis.area;
 import com.snapland.gis.area.dto.AreaResponse;
 import com.snapland.gis.area.dto.CreateAreaRequest;
 import com.snapland.gis.area.dto.GeoJsonGeometry;
+import com.snapland.gis.area.dto.UpdateAreaRequest;
+import com.snapland.gis.common.exception.AreaDeletedException;
+import com.snapland.gis.common.exception.AreaNotFoundException;
 import com.snapland.gis.common.exception.InvalidGeometryException;
+import com.snapland.gis.common.exception.VersionConflictException;
 import com.snapland.gis.common.exception.WorkspaceNotFoundException;
 import com.snapland.gis.user.User;
 import com.snapland.gis.user.UserRepository;
@@ -52,22 +56,7 @@ public class AreaService {
         Workspace workspace = workspaceRepository.findById(workspaceId)
                 .orElseThrow(() -> new WorkspaceNotFoundException(workspaceId));
 
-        GeoJsonGeometry geoJson = request.geometry();
-
-        if (!"Polygon".equals(geoJson.type())) {
-            throw new InvalidGeometryException("Only Polygon geometry type is supported.");
-        }
-        if (geoJson.coordinates() == null || geoJson.coordinates().isEmpty()) {
-            throw new InvalidGeometryException("Geometry coordinates are required.");
-        }
-        if (geoJson.coordinates().size() > 1) {
-            throw new InvalidGeometryException(
-                    "Polygon with interior rings (holes) is not supported.");
-        }
-
-        Polygon polygon = buildPolygon(geoJson.coordinates().get(0));
-        validatePolygon(polygon);
-
+        Polygon polygon = validateAndBuildPolygon(request.geometry());
         BigDecimal areaKm2 = calculateAreaKm2(polygon);
 
         User createdBy = userRepository.findById(createdByUserId)
@@ -85,6 +74,42 @@ public class AreaService {
         return toResponse(area);
     }
 
+    @Transactional
+    public AreaResponse updateArea(UUID workspaceId, UUID areaId, UpdateAreaRequest request, UUID updatedByUserId) {
+        workspaceRepository.findById(workspaceId)
+                .orElseThrow(() -> new WorkspaceNotFoundException(workspaceId));
+
+        Polygon polygon = validateAndBuildPolygon(request.geometry());
+        BigDecimal areaKm2 = calculateAreaKm2(polygon);
+
+        int affected = areaRepository.conditionalUpdate(
+                areaId, workspaceId, request.name(), polygon.toText(), areaKm2, request.expectedVersion());
+
+        if (affected == 0) {
+            Area area = areaRepository.findById(areaId).orElseThrow(() -> new AreaNotFoundException(areaId));
+            if (!workspaceId.equals(area.getWorkspace().getId())) {
+                throw new AreaNotFoundException(areaId);
+            }
+            if (area.getStatus() == AreaStatus.DELETED) {
+                throw new AreaDeletedException(areaId);
+            }
+            throw new VersionConflictException(areaId, request.expectedVersion(), area.getCurrentVersion());
+        }
+
+        User updatedBy = userRepository.findById(updatedByUserId)
+                .orElseThrow(() -> new IllegalStateException("Current user not found: " + updatedByUserId));
+
+        Area area = areaRepository.findById(areaId)
+                .orElseThrow(() -> new AreaNotFoundException(areaId));
+
+        int newVersion = area.getCurrentVersion();
+        areaVersionRepository.save(new AreaVersion(
+                area, newVersion, request.name(), polygon, areaKm2,
+                AreaStatus.ACTIVE, ChangeType.UPDATED, updatedBy));
+
+        return toResponse(area);
+    }
+
     public List<AreaResponse> findInViewport(UUID workspaceId, String bboxParam) {
         workspaceRepository.findById(workspaceId)
                 .orElseThrow(() -> new WorkspaceNotFoundException(workspaceId));
@@ -94,6 +119,22 @@ public class AreaService {
                 .stream()
                 .map(this::toResponse)
                 .toList();
+    }
+
+    private Polygon validateAndBuildPolygon(GeoJsonGeometry geoJson) {
+        if (!"Polygon".equals(geoJson.type())) {
+            throw new InvalidGeometryException("Only Polygon geometry type is supported.");
+        }
+        if (geoJson.coordinates() == null || geoJson.coordinates().isEmpty()) {
+            throw new InvalidGeometryException("Geometry coordinates are required.");
+        }
+        if (geoJson.coordinates().size() > 1) {
+            throw new InvalidGeometryException(
+                    "Polygon with interior rings (holes) is not supported.");
+        }
+        Polygon polygon = buildPolygon(geoJson.coordinates().get(0));
+        validatePolygon(polygon);
+        return polygon;
     }
 
     private Polygon buildPolygon(List<List<Double>> ring) {

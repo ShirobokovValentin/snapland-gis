@@ -18,3 +18,9 @@ export interface CreateAreaRequest {
   name: string;
   geometry: GeoJsonGeometry;
 }
+
+export interface UpdateAreaRequest {
+  expectedVersion: number;
+  name: string;
+  geometry: GeoJsonGeometry;
+}

@@ -2,6 +2,7 @@ package com.snapland.gis.area;
 
 import com.snapland.gis.area.dto.AreaResponse;
 import com.snapland.gis.area.dto.CreateAreaRequest;
+import com.snapland.gis.area.dto.UpdateAreaRequest;
 import jakarta.validation.Valid;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
@@ -38,5 +39,13 @@ public class AreaController {
             @PathVariable UUID workspaceId,
             @RequestParam String bbox) {
         return areaService.findInViewport(workspaceId, bbox);
+    }
+
+    @PutMapping("/{areaId}")
+    public AreaResponse updateArea(
+            @PathVariable UUID workspaceId,
+            @PathVariable UUID areaId,
+            @Valid @RequestBody UpdateAreaRequest request) {
+        return areaService.updateArea(workspaceId, areaId, request, devUserId);
     }
 }

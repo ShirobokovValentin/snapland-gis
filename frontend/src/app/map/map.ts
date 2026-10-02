@@ -27,9 +27,17 @@ export class MapComponent implements AfterViewInit, OnDestroy {
   saving = false;
   pendingLayer: L.Polygon | null = null;
 
+  editingArea: Area | null = null;
+  editName = '';
+  editLayer: L.Polygon | null = null;
+  editSaving = false;
+
   private map!: L.Map;
   private drawnItems!: L.FeatureGroup;
+  private editItems!: L.FeatureGroup;
   private persistedItems!: L.FeatureGroup;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private editHandler: any = null;
 
   constructor(private areaService: AreaService, private cdr: ChangeDetectorRef) {}
 
@@ -38,6 +46,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
   }
 
   ngOnDestroy(): void {
+    this.editHandler?.disable();
     this.map?.remove();
   }
 
@@ -67,6 +76,51 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     this.clearPending();
   }
 
+  saveEdit(): void {
+    if (!this.editingArea || !this.editLayer || !this.editName.trim()) return;
+
+    if (this.editHandler) {
+      this.editHandler.save();
+      this.editHandler.disable();
+      this.editHandler = null;
+    }
+
+    const latlngs = (this.editLayer.getLatLngs() as L.LatLng[][])[0];
+    this.editSaving = true;
+
+    this.areaService
+      .updateArea(this.editingArea.id, this.editingArea.currentVersion, this.editName.trim(), latlngs)
+      .subscribe({
+        next: (area) => {
+          this.editSaving = false;
+          this.clearEdit();
+          this.addPersistedArea(area);
+          this.cdr.detectChanges();
+        },
+        error: (err) => {
+          this.editSaving = false;
+          this.cdr.detectChanges();
+          if (err.status === 409) {
+            alert('This area was modified by another user. Reloading the latest version.');
+            this.clearEdit();
+            this.loadViewport();
+          } else {
+            console.error('Failed to update area', err);
+            alert('Failed to update area. See console for details.');
+          }
+        },
+      });
+  }
+
+  cancelEdit(): void {
+    if (this.editHandler) {
+      this.editHandler.revertLayers();
+      this.editHandler.disable();
+      this.editHandler = null;
+    }
+    this.clearEdit();
+  }
+
   private initMap(): void {
     this.map = L.map(this.mapRef.nativeElement, { doubleClickZoom: false }).setView([31.5, 34.8], 8);
 
@@ -76,6 +130,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     }).addTo(this.map);
 
     this.drawnItems = new L.FeatureGroup().addTo(this.map);
+    this.editItems = new L.FeatureGroup().addTo(this.map);
     this.persistedItems = new L.FeatureGroup().addTo(this.map);
 
     const drawControl = new L.Control.Draw({
@@ -87,7 +142,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
         marker: false,
         circlemarker: false,
       },
-      edit: { featureGroup: this.drawnItems, edit: false, remove: false },
+      edit: { featureGroup: this.editItems, edit: false, remove: false },
     });
     this.map.addControl(drawControl);
 
@@ -122,10 +177,48 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     const coords = area.geometry.coordinates[0];
     const latlngs = coords.map((c) => L.latLng(c[1], c[0]));
     const polygon = L.polygon(latlngs, { color: '#0066cc', weight: 2 });
+
+    const editBtn = `<button class="popup-edit-btn" data-area-id="${area.id}">Edit</button>`;
     polygon.bindPopup(
-      `<strong>${area.name}</strong><br>${area.areaKm2.toFixed(3)} km²`,
+      `<strong>${area.name}</strong><br>${area.areaKm2.toFixed(3)} km²<br>${editBtn}`,
     );
+
+    polygon.on('popupopen', () => {
+      const btn = document.querySelector<HTMLButtonElement>(
+        `.popup-edit-btn[data-area-id="${area.id}"]`,
+      );
+      if (btn) {
+        btn.onclick = () => {
+          polygon.closePopup();
+          this.startEdit(area, polygon);
+        };
+      }
+    });
+
     this.persistedItems.addLayer(polygon);
+  }
+
+  private startEdit(area: Area, polygon: L.Polygon): void {
+    this.clearPending();
+    this.editItems.clearLayers();
+
+    const coords = area.geometry.coordinates[0];
+    const latlngs = coords.map((c) => L.latLng(c[1], c[0]));
+    const editableLayer = L.polygon(latlngs, { color: '#ff6600', weight: 2 });
+
+    this.editItems.addLayer(editableLayer);
+    this.persistedItems.removeLayer(polygon);
+
+    this.editingArea = area;
+    this.editLayer = editableLayer;
+    this.editName = area.name;
+
+    this.editHandler = new (L as any).EditToolbar.Edit(this.map, {
+      featureGroup: this.editItems,
+    });
+    this.editHandler.enable();
+
+    this.cdr.detectChanges();
   }
 
   private clearPending(): void {
@@ -133,6 +226,15 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     this.pendingLayer = null;
     this.areaName = '';
     this.previewAreaKm2 = 0;
+  }
+
+  private clearEdit(): void {
+    this.editItems.clearLayers();
+    this.editingArea = null;
+    this.editLayer = null;
+    this.editName = '';
+    this.editSaving = false;
+    this.cdr.detectChanges();
   }
 }
 

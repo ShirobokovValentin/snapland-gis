@@ -3,7 +3,7 @@ import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import * as L from 'leaflet';
 import { environment } from '../../environments/environment';
-import { Area, CreateAreaRequest } from './area.model';
+import { Area, CreateAreaRequest, UpdateAreaRequest } from './area.model';
 
 @Injectable({ providedIn: 'root' })
 export class AreaService {
@@ -20,6 +20,19 @@ export class AreaService {
     };
     return this.http.post<Area>(
       `${this.base}/workspaces/${this.workspaceId}/areas`,
+      body,
+    );
+  }
+
+  updateArea(areaId: string, expectedVersion: number, name: string, latlngs: L.LatLng[]): Observable<Area> {
+    const coordinates = this.toClosedRing(latlngs);
+    const body: UpdateAreaRequest = {
+      expectedVersion,
+      name,
+      geometry: { type: 'Polygon', coordinates: [coordinates] },
+    };
+    return this.http.put<Area>(
+      `${this.base}/workspaces/${this.workspaceId}/areas/${areaId}`,
       body,
     );
   }

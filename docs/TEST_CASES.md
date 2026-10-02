@@ -14,12 +14,14 @@ observed through its HTTP API and browser UI.
 **Functionality covered (current prototype):**
 - Area creation via REST API
 - Viewport-based Area retrieval via REST API
+- Area update via REST API with optimistic concurrency control
 - Map rendering and polygon drawing in the browser
+- Area editing in the browser (rename and reshape)
 - Area persistence and reload
 
 **Explicitly out of scope (not yet implemented):**
 - Authentication and authorization
-- Area update, delete, and restore
+- Area delete and restore
 - Version history API
 - WebSocket / real-time collaboration
 - Redis and presence
@@ -80,6 +82,25 @@ A valid, closed polygon used as a baseline input in multiple test cases
     [35.55, 32.75],
     [35.50, 32.75],
     [35.50, 32.70]
+  ]]
+}
+```
+
+### Alternate Reference Polygon
+
+A second valid, closed polygon used in update test cases to supply a
+geometrically distinct replacement geometry (a roughly 30 km² square
+displaced north-east of the Reference Polygon):
+
+```json
+{
+  "type": "Polygon",
+  "coordinates": [[
+    [35.60, 32.80],
+    [35.65, 32.80],
+    [35.65, 32.85],
+    [35.60, 32.85],
+    [35.60, 32.80]
   ]]
 }
 ```
@@ -668,6 +689,256 @@ test data):
 
 ---
 
+### 4.3 Area Update
+
+---
+
+### TC-UPDATE-001 — Successful update returns 200 with updated fields
+
+**Type:** API
+**Priority:** Critical
+
+**Preconditions:**
+- Backend is running.
+- Dev Workspace exists.
+- An Active Area at version 1 exists. Note its `id`.
+
+**Steps:**
+1. Send a `PUT` request with `expectedVersion: 1`, a new name, and the
+   Alternate Reference Polygon.
+
+**Request:**
+- Method: `PUT`
+- Path: `/workspaces/00000000-0000-0000-0000-000000000002/areas/{id}`
+- Body:
+```json
+{
+  "expectedVersion": 1,
+  "name": "Updated Name",
+  "geometry": {
+    "type": "Polygon",
+    "coordinates": [[
+      [35.60, 32.80], [35.65, 32.80], [35.65, 32.85],
+      [35.60, 32.85], [35.60, 32.80]
+    ]]
+  }
+}
+```
+
+**Expected Result:**
+- HTTP `200 OK`.
+- Response body contains all of the following:
+
+| Field | Expected value |
+|-------|---------------|
+| `id` | Same UUID as the created Area |
+| `workspaceId` | `"00000000-0000-0000-0000-000000000002"` |
+| `name` | `"Updated Name"` |
+| `geometry.type` | `"Polygon"` |
+| `areaKm2` | Positive decimal reflecting the new geometry |
+| `status` | `"ACTIVE"` |
+| `currentVersion` | `2` |
+
+---
+
+### TC-UPDATE-002 — Version increments on each successive update
+
+**Type:** API
+**Priority:** High
+
+**Preconditions:**
+- Active Area at version 1 exists.
+
+**Steps:**
+1. `PUT` with `expectedVersion: 1`. Confirm `currentVersion: 2` in response.
+2. `PUT` with `expectedVersion: 2`. Confirm `currentVersion: 3` in response.
+
+**Expected Result:**
+- Each successful update increments `currentVersion` by exactly 1.
+- Both responses return HTTP `200 OK`.
+
+---
+
+### TC-UPDATE-003 — AreaVersion snapshot is persisted with all updated fields
+
+**Type:** API
+**Priority:** High
+
+**Preconditions:**
+- Active Area at version 1 exists, created with the Reference Polygon.
+
+**Steps:**
+1. `PUT` with `expectedVersion: 1`, name `"Snapshot Test"`, and the
+   Alternate Reference Polygon.
+2. Verify the persisted area_version record via
+   `GET /workspaces/.../areas?bbox=...` (black-box) or direct database
+   inspection in automated tests.
+
+**Expected Result:**
+- A new `area_version` row exists with all of:
+
+| Field | Expected value |
+|-------|---------------|
+| `version` | `2` |
+| `change_type` | `UPDATED` |
+| `name` | `"Snapshot Test"` |
+| `geometry` | Matches the Alternate Reference Polygon submitted in the `PUT` |
+| `area_km2` | Positive decimal matching the recalculated area for the new geometry |
+
+---
+
+### TC-UPDATE-004 — Stale expectedVersion returns 409 VERSION_CONFLICT with structured details
+
+**Type:** API
+**Priority:** Critical
+
+**Preconditions:**
+- Active Area at version 2 (one update already applied).
+
+**Steps:**
+1. `PUT` with `expectedVersion: 1` (stale).
+
+**Request:**
+- Method: `PUT`
+- Path: `/workspaces/00000000-0000-0000-0000-000000000002/areas/{id}`
+- Body: `{"expectedVersion": 1, "name": "Conflict", "geometry": <Reference Polygon>}`
+
+**Expected Result:**
+- HTTP `409 Conflict`.
+- Response body `code` = `"VERSION_CONFLICT"`.
+- Response body `details` object contains:
+
+| Field | Expected value |
+|-------|---------------|
+| `areaId` | UUID of the Area |
+| `expectedVersion` | `1` |
+| `currentVersion` | `2` |
+
+- No new `area_version` row is created.
+
+---
+
+### TC-UPDATE-005 — Unknown areaId returns 404 AREA_NOT_FOUND
+
+**Type:** API
+**Priority:** High
+
+**Preconditions:**
+- Backend is running.
+- Dev Workspace exists.
+
+**Steps:**
+1. `PUT` to a random Area ID that does not exist.
+
+**Request:**
+- Method: `PUT`
+- Path: `/workspaces/00000000-0000-0000-0000-000000000002/areas/{randomUuid}`
+- Body: `{"expectedVersion": 1, "name": "X", "geometry": <Reference Polygon>}`
+
+**Expected Result:**
+- HTTP `404 Not Found`.
+- Response body `code` = `"AREA_NOT_FOUND"`.
+
+---
+
+### TC-UPDATE-006 — Area belonging to a different workspace returns 404 AREA_NOT_FOUND
+
+**Type:** API
+**Priority:** Critical
+
+**Preconditions:**
+- Area X exists in Workspace A (`00000000-0000-0000-0000-000000000002`).
+- Workspace B exists with a distinct ID.
+
+**Steps:**
+1. `PUT` to `/workspaces/{workspaceBId}/areas/{areaXId}` using the correct
+   `expectedVersion` for Area X.
+
+**Expected Result:**
+- HTTP `404 Not Found`.
+- Response body `code` = `"AREA_NOT_FOUND"`.
+- Area X is **not** modified.
+- Workspace B membership does **not** grant access to Area X. The existence
+  and version of Area X are not leaked in the response.
+
+---
+
+### TC-UPDATE-007 — Deleted Area returns 409 AREA_DELETED
+
+**Type:** API
+**Priority:** High
+
+**Preconditions:**
+- Area exists with `status = DELETED`.
+
+**Steps:**
+1. `PUT` with the correct `expectedVersion`.
+
+**Expected Result:**
+- HTTP `409 Conflict`.
+- Response body `code` = `"AREA_DELETED"`.
+
+---
+
+### TC-UPDATE-008 — Unknown workspaceId returns 404 WORKSPACE_NOT_FOUND
+
+**Type:** API
+**Priority:** High
+
+**Preconditions:**
+- Backend is running.
+- The target workspace ID does not exist.
+
+**Steps:**
+1. `PUT` to a random workspace ID.
+
+**Request:**
+- Method: `PUT`
+- Path: `/workspaces/00000000-0000-0000-0000-000000000099/areas/{randomUuid}`
+- Body: `{"expectedVersion": 1, "name": "X", "geometry": <Reference Polygon>}`
+
+**Expected Result:**
+- HTTP `404 Not Found`.
+- Response body `code` = `"WORKSPACE_NOT_FOUND"`.
+
+---
+
+### TC-UPDATE-009 — Blank name returns 400 INVALID_REQUEST
+
+**Type:** API
+**Priority:** High
+
+**Preconditions:**
+- Active Area at version 1 exists.
+
+**Steps:**
+1. `PUT` with `name: ""`.
+
+**Expected Result:**
+- HTTP `400 Bad Request`.
+- Response body `code` = `"INVALID_REQUEST"`.
+- No new `area_version` row is created.
+
+---
+
+### TC-UPDATE-010 — Invalid polygon returns 400 INVALID_GEOMETRY, no version persisted
+
+**Type:** API
+**Priority:** High
+
+**Preconditions:**
+- Active Area at version 1 exists.
+
+**Steps:**
+1. `PUT` with a self-intersecting polygon (bowtie shape, same as TC-AREA-010).
+
+**Expected Result:**
+- HTTP `400 Bad Request`.
+- Response body `code` = `"INVALID_GEOMETRY"`.
+- No new `area_version` row is created. Area remains at version 1.
+
+---
+
 ## 5. UI End-to-End Tests
 
 ### Shared UI Preconditions
@@ -805,6 +1076,84 @@ Unless stated otherwise:
 
 ---
 
+### TC-UI-UPDATE-001 — Edit an existing Area and save name and geometry changes
+
+**Type:** UI
+**Priority:** Critical
+
+**Preconditions:**
+- Application is open and map is interactive.
+- At least one persisted Active Area is visible on the map.
+
+**Steps:**
+1. Click the saved Area polygon on the map. A popup appears showing the Area
+   name and size.
+2. Click the "Edit" button in the popup.
+3. Observe the map and panel.
+4. Move at least one vertex of the editable polygon to change its shape.
+5. Change the name in the edit panel to a new value (e.g., `"Renamed Area"`).
+6. Click "Save".
+7. Observe the map and panel after save completes.
+
+**Expected Result:**
+- After clicking "Edit" (step 3): the polygon is highlighted as editable
+  (orange outline), and an "Edit Area" panel appears showing the current name
+  and version.
+- After clicking "Save" (step 6):
+  - The edit panel is dismissed.
+  - The Area on the map shows the new shape.
+  - Clicking the Area polygon opens a popup showing the new name and the
+    recalculated area in km².
+
+---
+
+### TC-UI-UPDATE-002 — Updated Area state persists after browser refresh
+
+**Type:** UI
+**Priority:** Critical
+
+**Preconditions:**
+- TC-UI-UPDATE-001 has passed. The Area has been renamed and reshaped.
+
+**Steps:**
+1. Confirm the updated name and shape are visible on the map.
+2. Perform a full browser page refresh.
+3. Wait for the page and map to fully reload.
+4. Pan/zoom to the Area's location and observe the map.
+
+**Expected Result:**
+- The Area polygon appears in its updated shape.
+- Clicking the polygon opens a popup showing the updated name, not the
+  original name.
+- No user action is required to reload the current state.
+
+---
+
+### TC-UI-UPDATE-003 — Saving a stale edit informs the user and reloads authoritative state
+
+**Type:** UI
+**Priority:** High
+
+**Preconditions:**
+- Application is open in two browser tabs (Tab A and Tab B), both showing
+  the same Active Area.
+
+**Steps:**
+1. In Tab A: click the Area, click "Edit", change the name, and click "Save".
+   Confirm Tab A shows the updated name.
+2. In Tab B (without refreshing): click the same Area, click "Edit".
+3. In Tab B: change the name to a different value and click "Save".
+4. Observe Tab B.
+
+**Expected Result:**
+- Tab B displays an alert dialog informing the user that the Area was
+  modified by another user.
+- After the alert is dismissed, the map in Tab B reloads and shows the
+  version saved by Tab A (the authoritative state), not the value Tab B
+  attempted to save.
+
+---
+
 ## 6. Discrepancies and Observations
 
 The following items describe gaps between the current prototype and the
@@ -819,12 +1168,14 @@ added, every test case will need to supply a valid token. Test cases for
 `401 UNAUTHENTICATED` and `403 ACCESS_DENIED` responses are out of scope
 until then.
 
-**Discrepancy 2 — Error response `details` field is always empty.**
+**Discrepancy 2 — Error response `details` field (partially resolved).**
 The design specifies that error responses include a structured `details`
-object with error-specific data (e.g., `currentVersion` and `areaId` on a
-version conflict). The prototype always returns `"details": {}`. TC-AREA-012
-does not assert on `details` content. When OCC and other operations are
-implemented, `details` assertions should be added.
+object with error-specific data. `VERSION_CONFLICT` responses now include a
+populated `details` object containing `areaId`, `expectedVersion`, and
+`currentVersion` (see TC-UPDATE-004). All other error responses continue to
+return `"details": {}`. TC-AREA-012 does not assert on `details` content for
+non-conflict errors; this remains the expected behaviour until further error
+types are extended.
 
 **Discrepancy 3 — Client-side area preview appears after polygon completion,
 not during drawing.**
@@ -866,34 +1217,47 @@ an unclosed ring returns `400 INVALID_GEOMETRY`.
 | 1 | TC-AREA-001 | Golden path: validates the create response contract end-to-end |
 | 2 | TC-AREA-003 | Persistence: area survives and is found by viewport query |
 | 3 | TC-VP-001 | Viewport query returns area in bounds — core spatial feature |
-| 4 | TC-UI-002 | Full draw-and-save browser workflow |
-| 5 | TC-UI-003 | Area visible after browser refresh — end-to-end persistence |
+| 4 | TC-UPDATE-001 | Update golden path: response contract and version increment |
+| 5 | TC-UPDATE-004 | OCC: version conflict returns structured 409 — core concurrency contract |
+| 6 | TC-UI-002 | Full draw-and-save browser workflow |
+| 7 | TC-UI-003 | Area visible after browser refresh — end-to-end persistence |
+| 8 | TC-UI-UPDATE-001 | Full edit-and-save browser workflow |
+| 9 | TC-UI-UPDATE-002 | Edited Area visible after browser refresh |
 
 **Phase 2 — Validation and isolation**
 
 | # | ID | Reason |
 |---|----|--------|
-| 6 | TC-AREA-005 | 404 for unknown workspace on create |
-| 7 | TC-AREA-006 | Interior rings rejected — explicit design constraint |
-| 8 | TC-AREA-008 | Unclosed ring rejected — GeoJSON contract (resolved prototype gap) |
-| 9 | TC-AREA-010 | Self-intersecting polygon rejected — database integrity |
-| 10 | TC-VP-004 | Workspace isolation — data leakage would be a critical regression |
-| 11 | TC-AREA-012 | Error response shape — API consumer contract |
+| 10 | TC-AREA-005 | 404 for unknown workspace on create |
+| 11 | TC-AREA-006 | Interior rings rejected — explicit design constraint |
+| 12 | TC-AREA-008 | Unclosed ring rejected — GeoJSON contract (resolved prototype gap) |
+| 13 | TC-AREA-010 | Self-intersecting polygon rejected — database integrity |
+| 14 | TC-VP-004 | Workspace isolation — data leakage would be a critical regression |
+| 15 | TC-UPDATE-006 | Cross-workspace update returns 404 — workspace boundary must not leak data |
+| 16 | TC-UPDATE-007 | Deleted area returns 409 AREA_DELETED |
+| 17 | TC-UPDATE-010 | Invalid polygon on update rejected — database integrity |
+| 18 | TC-AREA-012 | Error response shape — API consumer contract |
+| 19 | TC-UI-UPDATE-003 | Stale edit informs user and reloads authoritative state |
 
 **Phase 3 — Remaining coverage**
 
 | # | ID | Reason |
 |---|----|--------|
-| 12 | TC-AREA-002 | areaKm2 accuracy — requires tolerance decision |
-| 13 | TC-AREA-004 | Invalid name (blank / whitespace) |
-| 14 | TC-AREA-007 | Ring with fewer than 4 positions |
-| 15 | TC-AREA-009 | Coordinate out of WGS84 range |
-| 16 | TC-AREA-011 | Non-Polygon geometry type |
-| 17 | TC-VP-002 | Area outside viewport not returned |
-| 18 | TC-VP-003 | Partial intersection returned |
-| 19 | TC-VP-005 | Empty viewport returns empty array |
-| 20 | TC-VP-006 | Malformed bbox inputs |
-| 21 | TC-VP-007 | 404 for unknown workspace on query |
-| 22 | TC-UI-004 | Viewport loading on pan/zoom |
-| 23 | TC-UI-001 | Application opens and map is interactive |
-| 24 | TC-UI-005 | Save failure communicated to user |
+| 20 | TC-AREA-002 | areaKm2 accuracy — requires tolerance decision |
+| 21 | TC-AREA-004 | Invalid name (blank / whitespace) |
+| 22 | TC-AREA-007 | Ring with fewer than 4 positions |
+| 23 | TC-AREA-009 | Coordinate out of WGS84 range |
+| 24 | TC-AREA-011 | Non-Polygon geometry type |
+| 25 | TC-VP-002 | Area outside viewport not returned |
+| 26 | TC-VP-003 | Partial intersection returned |
+| 27 | TC-VP-005 | Empty viewport returns empty array |
+| 28 | TC-VP-006 | Malformed bbox inputs |
+| 29 | TC-VP-007 | 404 for unknown workspace on query |
+| 30 | TC-UPDATE-002 | Version counter advances correctly across multiple updates |
+| 31 | TC-UPDATE-003 | AreaVersion snapshot completeness |
+| 32 | TC-UPDATE-005 | 404 for unknown areaId on update |
+| 33 | TC-UPDATE-008 | 404 for unknown workspace on update |
+| 34 | TC-UPDATE-009 | Blank name on update returns 400 |
+| 35 | TC-UI-004 | Viewport loading on pan/zoom |
+| 36 | TC-UI-001 | Application opens and map is interactive |
+| 37 | TC-UI-005 | Save failure communicated to user |

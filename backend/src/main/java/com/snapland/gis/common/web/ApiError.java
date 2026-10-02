@@ -7,4 +7,8 @@ public record ApiError(String code, String message, Object details, String trace
     static ApiError of(String code, String message, String traceId) {
         return new ApiError(code, message, Map.of(), traceId);
     }
+
+    static ApiError withDetails(String code, String message, Map<String, Object> details, String traceId) {
+        return new ApiError(code, message, details, traceId);
+    }
 }

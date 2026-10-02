@@ -1,0 +1,44 @@
+import { Injectable } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { Observable } from 'rxjs';
+import * as L from 'leaflet';
+import { environment } from '../../environments/environment';
+import { Area, CreateAreaRequest } from './area.model';
+
+@Injectable({ providedIn: 'root' })
+export class AreaService {
+  private readonly base = environment.apiUrl;
+  private readonly workspaceId = environment.workspaceId;
+
+  constructor(private http: HttpClient) {}
+
+  createArea(name: string, latlngs: L.LatLng[]): Observable<Area> {
+    const coordinates = this.toClosedRing(latlngs);
+    const body: CreateAreaRequest = {
+      name,
+      geometry: { type: 'Polygon', coordinates: [coordinates] },
+    };
+    return this.http.post<Area>(
+      `${this.base}/workspaces/${this.workspaceId}/areas`,
+      body,
+    );
+  }
+
+  getAreas(bounds: L.LatLngBounds): Observable<Area[]> {
+    const bbox = `${bounds.getWest()},${bounds.getSouth()},${bounds.getEast()},${bounds.getNorth()}`;
+    return this.http.get<Area[]>(
+      `${this.base}/workspaces/${this.workspaceId}/areas`,
+      { params: { bbox } },
+    );
+  }
+
+  private toClosedRing(latlngs: L.LatLng[]): number[][] {
+    const coords = latlngs.map((ll) => [ll.lng, ll.lat]);
+    const first = coords[0];
+    const last = coords[coords.length - 1];
+    if (first[0] !== last[0] || first[1] !== last[1]) {
+      coords.push([first[0], first[1]]);
+    }
+    return coords;
+  }
+}

@@ -1,0 +1,28 @@
+<div class="map-wrapper">
+  <div #mapRef class="map"></div>
+
+  @if (pendingLayer) {
+    <div class="area-panel">
+      <div class="area-panel-title">New Area</div>
+      <div class="area-preview">{{ previewAreaKm2 | number: '1.3-3' }} km²</div>
+      <input
+        [(ngModel)]="areaName"
+        placeholder="Area name"
+        class="area-name-input"
+        [disabled]="saving"
+      />
+      <div class="area-panel-actions">
+        <button class="btn btn-secondary" (click)="cancelDraw()" [disabled]="saving">
+          Cancel
+        </button>
+        <button
+          class="btn btn-primary"
+          (click)="saveArea()"
+          [disabled]="!areaName.trim() || saving"
+        >
+          {{ saving ? 'Saving…' : 'Save' }}
+        </button>
+      </div>
+    </div>
+  }
+</div>

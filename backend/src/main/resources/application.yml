@@ -1,3 +1,6 @@
+server:
+  port: 8081
+
 spring:
   application:
     name: snapland-gis
@@ -13,6 +16,9 @@ spring:
   flyway:
     enabled: true
     locations: classpath:db/migration
+  jackson:
+    serialization:
+      write-dates-as-timestamps: false
 
 management:
   endpoints:

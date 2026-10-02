@@ -1,0 +1,24 @@
+spring:
+  application:
+    name: snapland-gis
+  datasource:
+    url: jdbc:postgresql://localhost:5433/snapland_gis
+    username: snapland
+    password: snapland
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+  flyway:
+    enabled: true
+    locations: classpath:db/migration
+
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health
+  endpoint:
+    health:
+      show-details: always

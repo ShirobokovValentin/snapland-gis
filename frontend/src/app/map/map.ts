@@ -15,6 +15,18 @@ import { Area, AreaEventMessage, AreaVersionResponse } from '../area/area.model'
 import { RealtimeService } from '../realtime/realtime.service';
 import { environment } from '../../environments/environment';
 
+// Temporary satellite provider: Esri World Imagery.
+// GovMap remains the target provider per requirements; integration is blocked
+// pending token acquisition and is documented in docs/research/GOVMAP_SATELLITE_RESEARCH.md.
+// Replace this constant to switch providers without affecting Area logic.
+const SATELLITE_LAYER = {
+  url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+  options: {
+    maxZoom: 19,
+    attribution: 'Tiles &copy; Esri &mdash; Source: Esri, Vantor, Earthstar Geographics, and the GIS User Community',
+  },
+} as const;
+
 @Component({
   selector: 'app-map',
   imports: [FormsModule, DecimalPipe, DatePipe],
@@ -50,7 +62,11 @@ export class MapComponent implements AfterViewInit, OnDestroy {
   private previewLayer: L.Polygon | null = null;
   private previewItems!: L.FeatureGroup;
 
+  activeBaseMap: 'map' | 'satellite' = 'map';
+
   private map!: L.Map;
+  private osmLayer!: L.TileLayer;
+  private satelliteLayer!: L.TileLayer;
   private drawnItems!: L.FeatureGroup;
   private editItems!: L.FeatureGroup;
   private persistedItems!: L.FeatureGroup;
@@ -297,13 +313,27 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     });
   }
 
+  switchBaseMap(mode: 'map' | 'satellite'): void {
+    if (mode === this.activeBaseMap) return;
+    if (mode === 'satellite') {
+      this.osmLayer.remove();
+      this.satelliteLayer.addTo(this.map);
+    } else {
+      this.satelliteLayer.remove();
+      this.osmLayer.addTo(this.map);
+    }
+    this.activeBaseMap = mode;
+  }
+
   private initMap(): void {
     this.map = L.map(this.mapRef.nativeElement, { doubleClickZoom: false }).setView([31.5, 34.8], 8);
 
-    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    this.osmLayer = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       maxZoom: 19,
       attribution: '© OpenStreetMap contributors',
-    }).addTo(this.map);
+    });
+    this.satelliteLayer = L.tileLayer(SATELLITE_LAYER.url, SATELLITE_LAYER.options);
+    this.osmLayer.addTo(this.map);
 
     this.drawnItems = new L.FeatureGroup().addTo(this.map);
     this.editItems = new L.FeatureGroup().addTo(this.map);

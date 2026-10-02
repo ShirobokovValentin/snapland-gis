@@ -183,3 +183,41 @@
 .popup-actions button:hover {
   background: #e8e8e8;
 }
+
+.basemap-switcher {
+  position: absolute;
+  bottom: 24px;
+  left: 8px;
+  z-index: 1000;
+  display: flex;
+  border-radius: 4px;
+  overflow: hidden;
+  box-shadow: 0 1px 5px rgba(0, 0, 0, 0.25);
+}
+
+.basemap-btn {
+  padding: 6px 12px;
+  border: none;
+  border-right: 1px solid #ddd;
+  cursor: pointer;
+  font-size: 12px;
+  background: white;
+  color: #333;
+}
+
+.basemap-btn:last-child {
+  border-right: none;
+}
+
+.basemap-btn:hover {
+  background: #f0f0f0;
+}
+
+.basemap-btn-active {
+  background: #0066cc;
+  color: white;
+}
+
+.basemap-btn-active:hover {
+  background: #0055aa;
+}

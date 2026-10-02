@@ -1,6 +1,19 @@
 <div class="map-wrapper">
   <div #mapRef class="map"></div>
 
+  <div class="basemap-switcher">
+    <button
+      class="basemap-btn"
+      [class.basemap-btn-active]="activeBaseMap === 'map'"
+      (click)="switchBaseMap('map')"
+    >Map</button>
+    <button
+      class="basemap-btn"
+      [class.basemap-btn-active]="activeBaseMap === 'satellite'"
+      (click)="switchBaseMap('satellite')"
+    >Satellite</button>
+  </div>
+
   @if (pendingLayer) {
     <div class="area-panel">
       <div class="area-panel-title">New Area</div>

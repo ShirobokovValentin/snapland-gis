@@ -140,6 +140,8 @@ expose health endpoints. Error logging and monitoring must be provided.
 | **Rate Limiting** | A limit on the frequency of user requests/actions. Applied at the API Gateway. Exceeding the limit returns `429 Too Many Requests`. |
 | **Debounce** | A mechanism for limiting Viewport request frequency: a request is sent after a short pause following pan/zoom rather than on every map movement. |
 
+> **Prototype Implementation Note:** Esri World Imagery is used as the temporary satellite imagery provider for the prototype. GovMap remains the target provider from the requirements. The temporary provider configuration is isolated from application GIS state and business logic so that replacing the base-map integration later has minimal impact on Area functionality. GovMap integration research is documented in `docs/research/GOVMAP_SATELLITE_RESEARCH.md`.
+
 ## Domain Entities
 
 User --- System user {id, name, email, created_at}

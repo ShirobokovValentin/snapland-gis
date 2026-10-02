@@ -1862,6 +1862,116 @@ Unless stated otherwise:
 
 ---
 
+### TC-UI-HISTORY-001 — Open the History panel and view the version list
+
+**Type:** UI
+**Priority:** High
+
+**Preconditions:**
+- An ACTIVE Area with at least 2 versions is visible on the map.
+
+**Steps:**
+1. Click the Area polygon — popup opens showing the Area name, area in km², an
+   **Edit** button, and a **History** button.
+2. Click **History**.
+3. Observe the map and panel.
+
+**Expected Result:**
+- Popup closes.
+- A History panel appears.
+- Panel header shows the Area name.
+- Panel lists version rows ordered newest version first.
+- Each row displays: version number, change type, date/time.
+- A **Close** button is present.
+
+---
+
+### TC-UI-HISTORY-002 — Clicking a version row shows a geometry preview on the map
+
+**Type:** UI
+**Priority:** Medium
+
+**Preconditions:**
+- History panel is open. At least 2 versions with different geometries exist.
+
+**Steps:**
+1. Click a version row whose geometry differs from the current live polygon.
+2. Observe the map.
+3. Click a different version row.
+
+**Expected Result:**
+- After step 2: the selected row is visually highlighted; an orange dashed
+  polygon appears on the map representing the selected version's geometry.
+  The live polygon is still visible.
+- After step 3: the previous preview is removed and a new preview reflects
+  the newly selected version's geometry.
+
+---
+
+### TC-UI-HISTORY-003 — Restore from the History panel updates the map
+
+**Type:** UI
+**Priority:** High
+
+**Preconditions:**
+- History panel is open. Area is at version 2. Version 1 has name `"v1"`.
+
+**Steps:**
+1. Click **Restore** on the version 1 row.
+2. Read the browser confirm dialog and confirm the action.
+3. Observe the map and panel.
+
+**Expected Result:**
+- The confirm dialog message explains that restoring creates a new version
+  and does not modify or remove history.
+- After confirmation: History panel closes, orange preview polygon is removed.
+- Map reloads; the Area polygon reflects the restored state. Clicking the
+  polygon opens a popup showing name `"v1"`.
+
+---
+
+### TC-UI-HISTORY-004 — Closing the History panel removes the preview without changing the Area
+
+**Type:** UI
+**Priority:** Medium
+
+**Preconditions:**
+- History panel is open; a version row is selected so an orange preview polygon
+  is visible on the map.
+
+**Steps:**
+1. Click **Close**.
+2. Observe the map.
+
+**Expected Result:**
+- History panel closes.
+- Orange preview polygon is removed from the map.
+- The live persisted Area polygon is unchanged.
+
+---
+
+### TC-UI-HISTORY-005 — Stale restore from History informs the user and reloads authoritative state
+
+**Type:** UI
+**Priority:** Medium
+
+**Preconditions:**
+- History panel is open (captured `expectedVersion` = 2). While the panel
+  is open, another client mutates the Area so it is now at version 3.
+
+**Steps:**
+1. Click **Restore** on any version row in the History panel.
+2. Confirm the browser dialog.
+3. Observe the result.
+
+**Expected Result:**
+- The restore request returns `409 VERSION_CONFLICT`.
+- The user sees an informational alert about the concurrent modification.
+- The History panel closes and the preview is removed.
+- The map reloads and displays the authoritative current state of the Area.
+
+---
+
 ## 6. Discrepancies and Observations
 
 The following items describe gaps between the current prototype and the
@@ -1933,59 +2043,72 @@ an unclosed ring returns `400 INVALID_GEOMETRY`.
 | 11 | TC-DELETE-010 | Deleted Area excluded from viewport — spatial query regression |
 | 12 | TC-RESTORE-001 | Restore golden path: DELETED Area returns to ACTIVE |
 | 13 | TC-RESTORE-008 | Restore historical version of ACTIVE Area — validates full restore semantics |
+| 14 | TC-HISTORY-001 | History list golden path: versions ordered DESC |
+| 15 | TC-HISTORY-008 | Restore from history: new RESTORED version created; history unchanged |
+| 16 | TC-UI-HISTORY-001 | Open History panel and view version list |
+| 17 | TC-UI-HISTORY-003 | Restore from History panel updates the map |
 
 **Phase 2 — Validation and isolation**
 
 | # | ID | Reason |
 |---|----|--------|
-| 10 | TC-AREA-005 | 404 for unknown workspace on create |
-| 11 | TC-AREA-006 | Interior rings rejected — explicit design constraint |
-| 12 | TC-AREA-008 | Unclosed ring rejected — GeoJSON contract (resolved prototype gap) |
-| 13 | TC-AREA-010 | Self-intersecting polygon rejected — database integrity |
-| 14 | TC-VP-004 | Workspace isolation — data leakage would be a critical regression |
-| 15 | TC-UPDATE-006 | Cross-workspace update returns 404 — workspace boundary must not leak data |
-| 16 | TC-UPDATE-007 | Deleted area returns 409 AREA_DELETED |
-| 17 | TC-UPDATE-010 | Invalid polygon on update rejected — database integrity |
-| 18 | TC-AREA-012 | Error response shape — API consumer contract |
-| 19 | TC-UI-UPDATE-003 | Stale edit informs user and reloads authoritative state |
-| 20 | TC-DELETE-004 | OCC on delete: VERSION_CONFLICT details — core concurrency contract |
-| 21 | TC-DELETE-005 | AREA_DELETED distinct from VERSION_CONFLICT — semantic correctness |
-| 22 | TC-DELETE-006 | Concurrent deletes: exactly one succeeds — OCC correctness |
-| 23 | TC-DELETE-008 | Cross-workspace delete returns 404 — workspace boundary must not leak data |
-| 24 | TC-RESTORE-003 | Restore copies correct snapshot — data integrity |
-| 25 | TC-UI-DELETE-001 | Delete via UI: basic delete workflow |
-| 26 | TC-UI-DELETE-002 | Immediate restore: undo-delete workflow |
+| 1 | TC-AREA-005 | 404 for unknown workspace on create |
+| 2 | TC-AREA-006 | Interior rings rejected — explicit design constraint |
+| 3 | TC-AREA-008 | Unclosed ring rejected — GeoJSON contract (resolved prototype gap) |
+| 4 | TC-AREA-010 | Self-intersecting polygon rejected — database integrity |
+| 5 | TC-VP-004 | Workspace isolation — data leakage would be a critical regression |
+| 6 | TC-UPDATE-006 | Cross-workspace update returns 404 — workspace boundary must not leak data |
+| 7 | TC-UPDATE-007 | Deleted area returns 409 AREA_DELETED |
+| 8 | TC-UPDATE-010 | Invalid polygon on update rejected — database integrity |
+| 9 | TC-AREA-012 | Error response shape — API consumer contract |
+| 10 | TC-UI-UPDATE-003 | Stale edit informs user and reloads authoritative state |
+| 11 | TC-DELETE-004 | OCC on delete: VERSION_CONFLICT details — core concurrency contract |
+| 12 | TC-DELETE-005 | AREA_DELETED distinct from VERSION_CONFLICT — semantic correctness |
+| 13 | TC-DELETE-006 | Concurrent deletes: exactly one succeeds — OCC correctness |
+| 14 | TC-DELETE-008 | Cross-workspace delete returns 404 — workspace boundary must not leak data |
+| 15 | TC-RESTORE-003 | Restore copies correct snapshot — data integrity |
+| 16 | TC-UI-DELETE-001 | Delete via UI: basic delete workflow |
+| 17 | TC-UI-DELETE-002 | Immediate restore: undo-delete workflow |
+| 18 | TC-HISTORY-003 | History snapshot completeness: name, geometry, areaKm2, status, changeType |
+| 19 | TC-HISTORY-005 | 404 for unknown area on history — boundary contract |
+| 20 | TC-HISTORY-006 | Cross-workspace history returns 404 — workspace boundary must not leak data |
+| 21 | TC-UI-HISTORY-005 | Stale restore from History informs user and reloads authoritative state |
 
 **Phase 3 — Remaining coverage**
 
 | # | ID | Reason |
 |---|----|--------|
-| 20 | TC-AREA-002 | areaKm2 accuracy — requires tolerance decision |
-| 21 | TC-AREA-004 | Invalid name (blank / whitespace) |
-| 22 | TC-AREA-007 | Ring with fewer than 4 positions |
-| 23 | TC-AREA-009 | Coordinate out of WGS84 range |
-| 24 | TC-AREA-011 | Non-Polygon geometry type |
-| 25 | TC-VP-002 | Area outside viewport not returned |
-| 26 | TC-VP-003 | Partial intersection returned |
-| 27 | TC-VP-005 | Empty viewport returns empty array |
-| 28 | TC-VP-006 | Malformed bbox inputs |
-| 29 | TC-VP-007 | 404 for unknown workspace on query |
-| 30 | TC-UPDATE-002 | Version counter advances correctly across multiple updates |
-| 31 | TC-UPDATE-003 | AreaVersion snapshot completeness |
-| 32 | TC-UPDATE-005 | 404 for unknown areaId on update |
-| 33 | TC-UPDATE-008 | 404 for unknown workspace on update |
-| 34 | TC-UPDATE-009 | Blank name on update returns 400 |
-| 35 | TC-UI-004 | Viewport loading on pan/zoom |
-| 36 | TC-UI-001 | Application opens and map is interactive |
-| 37 | TC-UI-005 | Save failure communicated to user |
-| 38 | TC-DELETE-002 | AreaVersion snapshot completeness on delete |
-| 39 | TC-DELETE-003 | Missing expectedVersion on delete returns 400 |
-| 40 | TC-DELETE-007 | 404 for unknown areaId on delete |
-| 41 | TC-DELETE-009 | 404 for unknown workspace on delete |
-| 42 | TC-RESTORE-002 | AreaVersion snapshot completeness on restore |
-| 43 | TC-RESTORE-004 | Version monotonicity on restore |
-| 44 | TC-RESTORE-005 | Stale expectedVersion on restore returns 409 |
-| 45 | TC-RESTORE-006 | Unknown target version returns 404 AREA_VERSION_NOT_FOUND |
-| 46 | TC-RESTORE-007 | Unknown areaId on restore returns 404 AREA_VERSION_NOT_FOUND |
-| 47 | TC-RESTORE-009 | Null expectedVersion on restore returns 400 |
-| 48 | TC-UI-DELETE-003 | Dismiss restore panel removes deleted indicator |
+| 1 | TC-AREA-002 | areaKm2 accuracy — requires tolerance decision |
+| 2 | TC-AREA-004 | Invalid name (blank / whitespace) |
+| 3 | TC-AREA-007 | Ring with fewer than 4 positions |
+| 4 | TC-AREA-009 | Coordinate out of WGS84 range |
+| 5 | TC-AREA-011 | Non-Polygon geometry type |
+| 6 | TC-VP-002 | Area outside viewport not returned |
+| 7 | TC-VP-003 | Partial intersection returned |
+| 8 | TC-VP-005 | Empty viewport returns empty array |
+| 9 | TC-VP-006 | Malformed bbox inputs |
+| 10 | TC-VP-007 | 404 for unknown workspace on query |
+| 11 | TC-UPDATE-002 | Version counter advances correctly across multiple updates |
+| 12 | TC-UPDATE-003 | AreaVersion snapshot completeness |
+| 13 | TC-UPDATE-005 | 404 for unknown areaId on update |
+| 14 | TC-UPDATE-008 | 404 for unknown workspace on update |
+| 15 | TC-UPDATE-009 | Blank name on update returns 400 |
+| 16 | TC-UI-004 | Viewport loading on pan/zoom |
+| 17 | TC-UI-001 | Application opens and map is interactive |
+| 18 | TC-UI-005 | Save failure communicated to user |
+| 19 | TC-DELETE-002 | AreaVersion snapshot completeness on delete |
+| 20 | TC-DELETE-003 | Missing expectedVersion on delete returns 400 |
+| 21 | TC-DELETE-007 | 404 for unknown areaId on delete |
+| 22 | TC-DELETE-009 | 404 for unknown workspace on delete |
+| 23 | TC-RESTORE-002 | AreaVersion snapshot completeness on restore |
+| 24 | TC-RESTORE-004 | Version monotonicity on restore |
+| 25 | TC-RESTORE-005 | Stale expectedVersion on restore returns 409 |
+| 26 | TC-RESTORE-006 | Unknown target version returns 404 AREA_VERSION_NOT_FOUND |
+| 27 | TC-RESTORE-007 | Unknown areaId on restore returns 404 AREA_VERSION_NOT_FOUND |
+| 28 | TC-RESTORE-009 | Null expectedVersion on restore returns 400 |
+| 29 | TC-UI-DELETE-003 | Dismiss restore panel removes deleted indicator |
+| 30 | TC-HISTORY-002 | All change types present in history list |
+| 31 | TC-HISTORY-004 | History available for DELETED Area |
+| 32 | TC-HISTORY-007 | 404 for unknown workspace on history |
+| 33 | TC-UI-HISTORY-002 | Version row click shows geometry preview on map |
+| 34 | TC-UI-HISTORY-004 | Close History panel removes preview without modifying Area |

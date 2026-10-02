@@ -30,6 +30,7 @@ import org.springframework.messaging.simp.stomp.StompSessionHandlerAdapter;
 import org.springframework.test.context.ActiveProfiles;
 import org.springframework.test.context.DynamicPropertyRegistry;
 import org.springframework.test.context.DynamicPropertySource;
+import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import org.springframework.web.socket.messaging.WebSocketStompClient;
 import org.testcontainers.containers.PostgreSQLContainer;
@@ -38,6 +39,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.DockerImageName;
 
 import java.lang.reflect.Type;
+import java.net.URI;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.BlockingQueue;
@@ -118,9 +120,12 @@ class AreaWebSocketIntegrationTest {
     }
 
     private StompSession connect() throws Exception {
-        String url = "ws://localhost:" + port + "/ws";
+        StompHeaders connectHeaders = new StompHeaders();
+        connectHeaders.add("Authorization", "Bearer " + devToken);
         stompSession = stompClient
-                .connectAsync(url, new StompSessionHandlerAdapter() {})
+                .connectAsync(URI.create("ws://localhost:" + port + "/ws"),
+                        new WebSocketHttpHeaders(), connectHeaders,
+                        new StompSessionHandlerAdapter() {})
                 .get(5, TimeUnit.SECONDS);
         return stompSession;
     }

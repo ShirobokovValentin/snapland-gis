@@ -21,15 +21,25 @@ public final class TestJwtUtil {
     private TestJwtUtil() {}
 
     public static String generateToken(String jwtSecret, UUID userId) {
+        Instant now = Instant.now();
+        return build(jwtSecret, userId, now, now.plusSeconds(3600));
+    }
+
+    /** Produces a token whose expiry is already in the past (rejected by JwtDecoder). */
+    public static String generateExpiredToken(String jwtSecret, UUID userId) {
+        Instant expiresAt = Instant.now().minusSeconds(120);
+        return build(jwtSecret, userId, expiresAt.minusSeconds(3600), expiresAt);
+    }
+
+    private static String build(String jwtSecret, UUID userId, Instant issuedAt, Instant expiresAt) {
         SecretKeySpec key = new SecretKeySpec(
             jwtSecret.getBytes(StandardCharsets.UTF_8), "HmacSHA256");
         NimbusJwtEncoder encoder = new NimbusJwtEncoder(new ImmutableSecret<>(key));
-        Instant now = Instant.now();
         JwtClaimsSet claims = JwtClaimsSet.builder()
             .issuer("snapland-dev")
             .subject(userId.toString())
-            .issuedAt(now)
-            .expiresAt(now.plusSeconds(3600))
+            .issuedAt(issuedAt)
+            .expiresAt(expiresAt)
             .build();
         return encoder.encode(
             JwtEncoderParameters.from(JwsHeader.with(MacAlgorithm.HS256).build(), claims)

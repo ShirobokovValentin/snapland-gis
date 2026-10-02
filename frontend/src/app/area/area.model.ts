@@ -26,6 +26,13 @@ export interface AreaVersionResponse {
   createdAt: string;
 }
 
+export interface AreaEventMessage {
+  type: 'AREA_CREATED' | 'AREA_UPDATED' | 'AREA_DELETED' | 'AREA_RESTORED';
+  workspaceId: string;
+  timestamp: string;
+  payload: Area;
+}
+
 export interface CreateAreaRequest {
   name: string;
   geometry: GeoJsonGeometry;

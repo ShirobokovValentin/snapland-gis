@@ -11,7 +11,9 @@ import { FormsModule } from '@angular/forms';
 import * as L from 'leaflet';
 import 'leaflet-draw';
 import { AreaService } from '../area/area.service';
-import { Area, AreaVersionResponse } from '../area/area.model';
+import { Area, AreaEventMessage, AreaVersionResponse } from '../area/area.model';
+import { RealtimeService } from '../realtime/realtime.service';
+import { environment } from '../../environments/environment';
 
 @Component({
   selector: 'app-map',
@@ -37,6 +39,8 @@ export class MapComponent implements AfterViewInit, OnDestroy {
   restoreSaving = false;
   private deletedLayer: L.Polygon | null = null;
 
+  editVersionWarning = false;
+
   historyArea: Area | null = null;
   historyVersions: AreaVersionResponse[] = [];
   historyLoading = false;
@@ -53,15 +57,21 @@ export class MapComponent implements AfterViewInit, OnDestroy {
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private editHandler: any = null;
 
-  constructor(private areaService: AreaService, private cdr: ChangeDetectorRef) {}
+  constructor(
+    private areaService: AreaService,
+    private realtimeService: RealtimeService,
+    private cdr: ChangeDetectorRef,
+  ) {}
 
   ngAfterViewInit(): void {
     this.initMap();
+    this.connectToRealtime();
   }
 
   ngOnDestroy(): void {
     this.editHandler?.disable();
     this.map?.remove();
+    this.realtimeService.disconnect();
   }
 
   saveArea(): void {
@@ -334,10 +344,29 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     this.areaService.getAreas(bounds).subscribe({
       next: (areas) => {
         this.persistedItems.clearLayers();
-        areas.forEach((area) => this.addPersistedArea(area));
+        areas.forEach((area) => {
+          if (area.id === this.editingArea?.id || area.id === this.deletedArea?.id) return;
+          this.addPersistedArea(area);
+        });
       },
       error: (err) => console.error('Failed to load areas', err),
     });
+  }
+
+  private connectToRealtime(): void {
+    this.realtimeService.connect(
+      environment.workspaceId,
+      (event) => this.handleRealtimeEvent(event),
+      () => this.loadViewport(),
+    );
+  }
+
+  private handleRealtimeEvent(event: AreaEventMessage): void {
+    if (event.type === 'AREA_UPDATED' && this.editingArea?.id === event.payload.id) {
+      this.editVersionWarning = true;
+      this.cdr.detectChanges();
+    }
+    this.loadViewport();
   }
 
   private addPersistedArea(area: Area): void {
@@ -414,6 +443,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     this.editName = '';
     this.editSaving = false;
     this.deleteSaving = false;
+    this.editVersionWarning = false;
     this.cdr.detectChanges();
   }
 

@@ -18,16 +18,18 @@ observed through its HTTP API and browser UI.
 - Area deletion via REST API with optimistic concurrency control
 - Area restore from historical version via REST API
 - Area version history retrieval via REST API
+- Real-time Area updates via WebSocket (STOMP over `/ws`, topic `/topic/workspace/{id}`)
 - Map rendering and polygon drawing in the browser
 - Area editing in the browser (rename and reshape)
 - Area deletion and immediate restore in the browser
 - Area history panel in the browser with version preview and restore
 - Area persistence and reload
+- Real-time cross-browser synchronization of Area mutations
 
 **Explicitly out of scope (not yet implemented):**
 - Authentication and authorization
-- WebSocket / real-time collaboration
-- Redis and presence
+- Multi-instance scaling with Redis Pub/Sub
+- Presence and cursors
 - Satellite map layer
 
 ---
@@ -1580,6 +1582,191 @@ Restore explicitly supports reverting an ACTIVE Area to any historical snapshot.
 
 ---
 
+## 4c. WebSocket / Real-Time Tests
+
+### Shared Preconditions
+
+- Backend is running with the dev profile active.
+- Dev Workspace and Dev User are seeded.
+- A STOMP client is connected to `ws://localhost:8081/ws` and subscribed to
+  `/topic/workspace/00000000-0000-0000-0000-000000000002` before the triggering
+  HTTP request is sent.
+
+---
+
+### TC-WS-001 — WebSocket connection to /ws succeeds
+
+**Type:** API
+**Priority:** High
+
+**Preconditions:**
+- Backend is running.
+
+**Steps:**
+1. Open a STOMP WebSocket connection to `ws://localhost:8081/ws`.
+2. Wait for the CONNECTED frame.
+
+**Expected Result:**
+- Connection is established and the STOMP CONNECTED frame is received without
+  error.
+
+---
+
+### TC-WS-002 — Create area publishes AREA_CREATED event on the workspace topic
+
+**Type:** API
+**Priority:** Critical
+
+**Preconditions:**
+- STOMP client is subscribed to the Dev Workspace topic.
+- No Areas exist in the workspace.
+
+**Steps:**
+1. Send `POST /workspaces/00000000-0000-0000-0000-000000000002/areas` with a
+   valid name and the Reference Polygon.
+2. Wait for a message to arrive on the subscribed topic.
+
+**Expected Result:**
+- HTTP `201 Created` is returned.
+- A message is received within a reasonable timeout.
+- Message body fields:
+
+| Field | Expected value |
+|-------|---------------|
+| `type` | `"AREA_CREATED"` |
+| `workspaceId` | `"00000000-0000-0000-0000-000000000002"` |
+| `timestamp` | Non-blank ISO-8601 string |
+| `payload.id` | UUID matching the `id` in the `201` response |
+| `payload.currentVersion` | `1` |
+| `payload.status` | `"ACTIVE"` |
+
+---
+
+### TC-WS-003 — Update area publishes AREA_UPDATED event with new version number
+
+**Type:** API
+**Priority:** High
+
+**Preconditions:**
+- An Active Area at version 1 exists. Note its `id`.
+- STOMP client is subscribed to the Dev Workspace topic.
+
+**Steps:**
+1. Send `PUT .../areas/{id}` with `expectedVersion: 1`, a new name, and valid geometry.
+2. Wait for a message to arrive on the subscribed topic.
+
+**Expected Result:**
+- HTTP `200 OK`.
+- Message received with:
+  - `type` = `"AREA_UPDATED"`
+  - `payload.id` matches `{id}`
+  - `payload.currentVersion` = `2`
+  - `payload.status` = `"ACTIVE"`
+
+---
+
+### TC-WS-004 — Delete area publishes AREA_DELETED event with DELETED status
+
+**Type:** API
+**Priority:** High
+
+**Preconditions:**
+- An Active Area at version 1 exists. Note its `id`.
+- STOMP client is subscribed to the Dev Workspace topic.
+
+**Steps:**
+1. Send `DELETE .../areas/{id}?expectedVersion=1`.
+2. Wait for a message to arrive on the subscribed topic.
+
+**Expected Result:**
+- HTTP `200 OK`.
+- Message received with:
+  - `type` = `"AREA_DELETED"`
+  - `payload.id` matches `{id}`
+  - `payload.currentVersion` = `2`
+  - `payload.status` = `"DELETED"`
+
+---
+
+### TC-WS-005 — Restore area publishes AREA_RESTORED event with ACTIVE status and incremented version
+
+**Type:** API
+**Priority:** High
+
+**Preconditions:**
+- Area exists at version 2 (`DELETED`). Version 1 exists in history.
+- STOMP client is subscribed to the Dev Workspace topic.
+
+**Steps:**
+1. Send `POST .../areas/{id}/versions/1/restore` with `{ "expectedVersion": 2 }`.
+2. Wait for a message to arrive on the subscribed topic.
+
+**Expected Result:**
+- HTTP `200 OK`.
+- Message received with:
+  - `type` = `"AREA_RESTORED"`
+  - `payload.id` matches `{id}`
+  - `payload.currentVersion` = `3`
+  - `payload.status` = `"ACTIVE"`
+
+---
+
+### TC-WS-006 — Event for workspace A is not received by a subscriber on workspace B topic
+
+**Type:** API
+**Priority:** Critical
+
+**Preconditions:**
+- Dev Workspace A (`00000000-0000-0000-0000-000000000002`) and a second
+  Workspace B (distinct ID) both exist.
+- STOMP client is subscribed only to `/topic/workspace/{workspaceA-id}`.
+
+**Steps:**
+1. Create an Area in Workspace B via `POST`.
+2. Wait for the timeout period used in positive-event tests.
+
+**Expected Result:**
+- No message is received on the Workspace A topic.
+
+---
+
+### TC-WS-007 — Invalid geometry (rejected before DB write) produces no WebSocket event
+
+**Type:** API
+**Priority:** High
+
+**Preconditions:**
+- STOMP client is subscribed to the Dev Workspace topic.
+
+**Steps:**
+1. Send `POST` with a self-intersecting (bowtie) polygon.
+2. Wait for the timeout period.
+
+**Expected Result:**
+- HTTP `400 Bad Request`.
+- No message is received on the topic during the timeout window.
+
+---
+
+### TC-WS-008 — Version conflict (rolled-back transaction) produces no WebSocket event
+
+**Type:** API
+**Priority:** Critical
+
+**Preconditions:**
+- An Active Area at version 2 exists.
+- STOMP client is subscribed to the Dev Workspace topic.
+
+**Steps:**
+1. Send `PUT .../areas/{id}` with `expectedVersion: 1` (stale).
+2. Wait for the timeout period.
+
+**Expected Result:**
+- HTTP `409 Conflict` with `code = "VERSION_CONFLICT"`.
+- No message is received on the topic during the timeout window.
+
+---
+
 ## 5. UI End-to-End Tests
 
 ### Shared UI Preconditions
@@ -1972,6 +2159,120 @@ Unless stated otherwise:
 
 ---
 
+### TC-UI-WS-001 — Created Area appears in another browser
+
+**Type:** UI
+**Priority:** Critical
+
+**Preconditions:**
+- The same Workspace is open in Browser/Tab A and Browser/Tab B.
+- Both clients are connected to WebSocket.
+
+**Steps:**
+1. In A, create and save an Area inside the viewport visible in B.
+
+**Expected Result:**
+- B displays the newly persisted Area without manual refresh.
+- The Area name and geometry correspond to the saved state.
+
+---
+
+### TC-UI-WS-002 — Updated Area is refreshed in another browser
+
+**Type:** UI
+**Priority:** High
+
+**Preconditions:**
+- The same persisted Area is visible in A and B.
+
+**Steps:**
+1. In A, edit the Area name and geometry.
+2. Save.
+
+**Expected Result:**
+- B displays the new persisted name and geometry without manual refresh.
+
+---
+
+### TC-UI-WS-003 — Deleted Area disappears in another browser
+
+**Type:** UI
+**Priority:** High
+
+**Preconditions:**
+- The same Area is visible in A and B.
+
+**Steps:**
+1. Delete the Area in A and confirm.
+
+**Expected Result:**
+- The Area disappears from B without manual refresh.
+
+---
+
+### TC-UI-WS-004 — Restored Area reappears in another browser
+
+**Type:** UI
+**Priority:** High
+
+**Preconditions:**
+- A and B are open on the same Workspace.
+- An Area has just been deleted in A.
+
+**Steps:**
+1. Use the immediate Restore action in A.
+
+**Expected Result:**
+- The restored Area appears in B without manual refresh.
+- It reflects the restored persisted state.
+
+---
+
+### TC-UI-WS-005 — Reconnect resynchronizes authoritative viewport state
+
+**Type:** UI
+**Priority:** High
+
+**Preconditions:**
+- A and B show the same Workspace.
+
+**Steps:**
+1. Disconnect B from the backend/WebSocket.
+2. Mutate an Area in A while B is disconnected.
+3. Reconnect B.
+
+**Expected Result:**
+- B resynchronizes the current viewport through REST.
+- B displays the authoritative persisted state even though it missed the
+  WebSocket event.
+
+---
+
+### TC-UI-WS-006 — Peer update does not destroy an edit in progress
+
+**Type:** UI
+**Priority:** High
+
+**Preconditions:**
+- Area is at version N and visible in A and B.
+
+**Steps:**
+1. In B, start editing the Area and make unsaved changes.
+2. In A, edit and save the same Area, producing version N+1.
+3. Observe B.
+4. Attempt to save B's edit.
+
+**Expected Result:**
+- B's unsaved geometry and form values are not replaced by the realtime
+  update.
+- B shows the non-blocking warning that a newer version was saved by
+  another user.
+- Saving B's stale edit returns VERSION_CONFLICT.
+- B then reloads authoritative persisted state according to the existing
+  conflict-handling behavior.
+
+---
+
 ## 6. Discrepancies and Observations
 
 The following items describe gaps between the current prototype and the
@@ -2047,6 +2348,8 @@ an unclosed ring returns `400 INVALID_GEOMETRY`.
 | 15 | TC-HISTORY-008 | Restore from history: new RESTORED version created; history unchanged |
 | 16 | TC-UI-HISTORY-001 | Open History panel and view version list |
 | 17 | TC-UI-HISTORY-003 | Restore from History panel updates the map |
+| 18 | TC-WS-002 | AREA_CREATED event: connection and delivery golden path |
+| 19 | TC-UI-WS-001 | Created Area appears in another browser without refresh |
 
 **Phase 2 — Validation and isolation**
 
@@ -2073,6 +2376,12 @@ an unclosed ring returns `400 INVALID_GEOMETRY`.
 | 19 | TC-HISTORY-005 | 404 for unknown area on history — boundary contract |
 | 20 | TC-HISTORY-006 | Cross-workspace history returns 404 — workspace boundary must not leak data |
 | 21 | TC-UI-HISTORY-005 | Stale restore from History informs user and reloads authoritative state |
+| 22 | TC-WS-001 | WebSocket connection succeeds — prerequisite for all WS tests |
+| 23 | TC-WS-006 | Workspace isolation: no cross-workspace event leakage |
+| 24 | TC-WS-007 | Invalid geometry produces no event — transaction boundary |
+| 25 | TC-WS-008 | Version conflict (rollback) produces no event — transaction boundary |
+| 26 | TC-UI-WS-005 | Reconnect resynchronizes authoritative viewport state |
+| 27 | TC-UI-WS-006 | Peer update does not destroy an edit in progress |
 
 **Phase 3 — Remaining coverage**
 
@@ -2112,3 +2421,9 @@ an unclosed ring returns `400 INVALID_GEOMETRY`.
 | 32 | TC-HISTORY-007 | 404 for unknown workspace on history |
 | 33 | TC-UI-HISTORY-002 | Version row click shows geometry preview on map |
 | 34 | TC-UI-HISTORY-004 | Close History panel removes preview without modifying Area |
+| 35 | TC-WS-003 | AREA_UPDATED event carries new version number |
+| 36 | TC-WS-004 | AREA_DELETED event carries DELETED status |
+| 37 | TC-WS-005 | AREA_RESTORED event carries ACTIVE status and incremented version |
+| 38 | TC-UI-WS-002 | Updated Area is refreshed in another browser |
+| 39 | TC-UI-WS-003 | Deleted Area disappears in another browser |
+| 40 | TC-UI-WS-004 | Restored Area reappears in another browser |

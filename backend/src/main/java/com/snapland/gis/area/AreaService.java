@@ -6,6 +6,7 @@ import com.snapland.gis.area.dto.CreateAreaRequest;
 import com.snapland.gis.area.dto.GeoJsonGeometry;
 import com.snapland.gis.area.dto.RestoreAreaRequest;
 import com.snapland.gis.area.dto.UpdateAreaRequest;
+import com.snapland.gis.realtime.AreaEventMessage;
 import com.snapland.gis.common.exception.AreaDeletedException;
 import com.snapland.gis.common.exception.AreaNotFoundException;
 import com.snapland.gis.common.exception.AreaVersionNotFoundException;
@@ -20,11 +21,13 @@ import org.locationtech.jts.geom.Coordinate;
 import org.locationtech.jts.geom.GeometryFactory;
 import org.locationtech.jts.geom.Polygon;
 import org.locationtech.jts.geom.PrecisionModel;
+import org.springframework.context.ApplicationEventPublisher;
 import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
 import java.math.BigDecimal;
+import java.time.Instant;
 import java.util.Arrays;
 import java.util.List;
 import java.util.UUID;
@@ -41,17 +44,20 @@ public class AreaService {
     private final WorkspaceRepository workspaceRepository;
     private final UserRepository userRepository;
     private final JdbcTemplate jdbcTemplate;
+    private final ApplicationEventPublisher eventPublisher;
 
     public AreaService(AreaRepository areaRepository,
                        AreaVersionRepository areaVersionRepository,
                        WorkspaceRepository workspaceRepository,
                        UserRepository userRepository,
-                       JdbcTemplate jdbcTemplate) {
+                       JdbcTemplate jdbcTemplate,
+                       ApplicationEventPublisher eventPublisher) {
         this.areaRepository = areaRepository;
         this.areaVersionRepository = areaVersionRepository;
         this.workspaceRepository = workspaceRepository;
         this.userRepository = userRepository;
         this.jdbcTemplate = jdbcTemplate;
+        this.eventPublisher = eventPublisher;
     }
 
     @Transactional
@@ -74,7 +80,10 @@ public class AreaService {
                 area, 1, request.name(), polygon, areaKm2,
                 AreaStatus.ACTIVE, ChangeType.CREATED, createdBy));
 
-        return toResponse(area);
+        AreaResponse response = toResponse(area);
+        eventPublisher.publishEvent(
+                new AreaEventMessage("AREA_CREATED", workspaceId.toString(), Instant.now().toString(), response));
+        return response;
     }
 
     @Transactional
@@ -110,7 +119,10 @@ public class AreaService {
                 area, newVersion, request.name(), polygon, areaKm2,
                 AreaStatus.ACTIVE, ChangeType.UPDATED, updatedBy));
 
-        return toResponse(area);
+        AreaResponse response = toResponse(area);
+        eventPublisher.publishEvent(
+                new AreaEventMessage("AREA_UPDATED", workspaceId.toString(), Instant.now().toString(), response));
+        return response;
     }
 
     @Transactional
@@ -143,7 +155,10 @@ public class AreaService {
                 area, newVersion, area.getName(), area.getGeometry(), area.getAreaKm2(),
                 AreaStatus.DELETED, ChangeType.DELETED, deletedBy));
 
-        return toResponse(area);
+        AreaResponse response = toResponse(area);
+        eventPublisher.publishEvent(
+                new AreaEventMessage("AREA_DELETED", workspaceId.toString(), Instant.now().toString(), response));
+        return response;
     }
 
     @Transactional
@@ -183,7 +198,10 @@ public class AreaService {
                 targetAreaVersion.getGeometry(), targetAreaVersion.getAreaKm2(),
                 AreaStatus.ACTIVE, ChangeType.RESTORED, restoredBy));
 
-        return toResponse(area);
+        AreaResponse response = toResponse(area);
+        eventPublisher.publishEvent(
+                new AreaEventMessage("AREA_RESTORED", workspaceId.toString(), Instant.now().toString(), response));
+        return response;
     }
 
     public List<AreaVersionResponse> getAreaVersions(UUID workspaceId, UUID areaId) {

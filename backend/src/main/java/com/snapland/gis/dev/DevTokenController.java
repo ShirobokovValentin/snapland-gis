@@ -1,6 +1,7 @@
 package com.snapland.gis.dev;
 
 import com.snapland.gis.auth.JwtIssuer;
+import io.swagger.v3.oas.annotations.Hidden;
 import org.springframework.context.annotation.Profile;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestMapping;
@@ -11,6 +12,7 @@ import org.springframework.web.bind.annotation.RestController;
  * any credential verification. Present only when the "dev" profile is active.
  * This is not a security mechanism — it must not be deployed to production.
  */
+@Hidden
 @RestController
 @Profile("dev")
 @RequestMapping("/dev")

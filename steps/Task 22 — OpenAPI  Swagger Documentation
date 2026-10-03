@@ -1,0 +1,433 @@
+Task 22 — OpenAPI / Swagger Documentation
+
+Goal
+
+Add OpenAPI / Swagger documentation to the existing Snapland GIS REST API.
+
+This is an optional bonus item from the original project requirements:
+
+    API documentation (OpenAPI/Swagger)
+
+The goal is documentation and discoverability of the EXISTING API.
+
+Do NOT redesign the REST API.
+Do NOT change existing endpoint behavior merely to make the OpenAPI specification prettier.
+
+First inspect the actual current codebase because Task 21 (Workspace Selection & Management) may have changed routes and API contracts.
+
+Then implement the smallest clean solution.
+
+## 1. Technology
+
+Use springdoc-openapi appropriate for the project's current Spring Boot version.
+
+Prefer the standard Spring Boot starter dependency, for example:
+
+    org.springdoc:springdoc-openapi-starter-webmvc-ui
+
+but first inspect:
+
+- current Spring Boot version
+- current dependency management
+- existing OpenAPI/Swagger dependencies, if any
+
+Do not add redundant libraries.
+
+Do not introduce a separate manually maintained openapi.yaml unless there is a strong technical reason.
+
+The Java controllers and DTOs should remain the source of truth.
+
+## 2. Required endpoints
+
+After implementation, the application should expose:
+
+    /swagger-ui/index.html
+
+and:
+
+    /v3/api-docs
+
+If springdoc also provides:
+
+    /v3/api-docs.yaml
+
+that is fine, but no custom YAML generation is required.
+
+## 3. Security
+
+The Swagger UI and OpenAPI specification must be accessible without authentication:
+
+    /swagger-ui/**
+    /v3/api-docs/**
+
+Update Spring Security explicitly if required.
+
+Application business endpoints must retain their existing authentication rules.
+
+Do NOT weaken authentication for:
+
+    /workspaces/**
+    /auth/**
+    or any other existing protected business endpoint
+
+except where an endpoint is already intentionally public.
+
+## 4. JWT Bearer authentication in Swagger
+
+Configure OpenAPI with a Bearer JWT security scheme.
+
+Swagger UI should expose the standard:
+
+    Authorize
+
+button.
+
+The security scheme should represent:
+
+    Authorization: Bearer <JWT>
+
+Use a conventional name such as:
+
+    bearerAuth
+
+Authenticated endpoints should be documented as requiring bearerAuth.
+
+Public authentication endpoints such as registration/login should NOT incorrectly appear as requiring JWT.
+
+Do not implement a custom login mechanism inside Swagger UI.
+
+A developer should be able to:
+
+1. Register/login using the existing auth endpoint.
+2. Copy the returned JWT.
+3. Click "Authorize" in Swagger UI.
+4. Enter the token.
+5. Execute protected endpoints.
+
+## 5. API metadata
+
+Add a small OpenAPI configuration with metadata such as:
+
+    Title: Snapland GIS API
+    Version: 1.0
+    Description: REST API for the Snapland collaborative GIS prototype
+
+Keep it concise.
+
+Do not add fictional production URLs, support contacts, licenses, or company information.
+
+## 6. Controllers to document
+
+Inspect all current REST controllers and ensure the generated specification covers the actual API.
+
+At minimum inspect/document:
+
+### Authentication
+
+Current register/login endpoints.
+
+Document:
+
+- request DTO
+- successful response
+- relevant validation/authentication errors
+
+### Workspaces
+
+Current Task 21 endpoints, expected approximately as:
+
+    GET    /workspaces
+    POST   /workspaces
+    DELETE /workspaces/{workspaceId}
+
+Use the actual implementation as source of truth.
+
+Document:
+
+- workspaceId
+- request body
+- responses
+- authentication
+- creator-only deletion behavior
+- 401 / 403 / 404 where applicable
+
+### Areas
+
+Document all existing Area operations, including the actual current routes for:
+
+- viewport query
+- create
+- update
+- delete
+- restore
+- deleted Areas
+- permanent delete
+- history/version access
+
+Do not invent routes. Inspect AreaController and related controllers first.
+
+For the viewport endpoint, document the bbox format clearly, for example:
+
+    minLon,minLat,maxLon,maxLat
+
+if that matches the actual API.
+
+### Presence
+
+Document:
+
+    GET /workspaces/{workspaceId}/presence
+
+using the actual current contract.
+
+Explain briefly that presence is ephemeral and represents currently connected users.
+
+## 7. WebSocket documentation boundary
+
+OpenAPI describes HTTP APIs, not STOMP/WebSocket messaging.
+
+Do NOT try to represent STOMP subscriptions as fake REST endpoints.
+
+Instead, add a concise note to README.md or DESIGN.md explaining that:
+
+    /ws
+
+is the authenticated STOMP/WebSocket endpoint and is outside the OpenAPI REST specification.
+
+Document the existing topics at a high level if useful, using the ACTUAL current implementation, for example:
+
+    /topic/workspace/{workspaceId}/areas
+    /topic/workspace/{workspaceId}/presence
+
+Do not invent topic names.
+
+No AsyncAPI dependency or AsyncAPI document is required for this task.
+
+## 8. Error contract
+
+The project already has a centralized GlobalExceptionHandler and an existing error response contract.
+
+Swagger should document the EXISTING error DTO/schema rather than inventing a second error format.
+
+Inspect:
+
+    GlobalExceptionHandler
+    error response DTO(s)
+    exception classes
+
+Document important responses such as:
+
+    400
+    401
+    403
+    404
+    409
+    429
+
+only where they are actually possible for the endpoint.
+
+Do not mechanically attach every possible HTTP status to every operation.
+
+Examples that should be represented where applicable:
+
+    INVALID_GEOMETRY
+    VERSION_CONFLICT
+    AREA_NOT_DELETED
+    rate-limit rejection
+    workspace deletion authorization errors
+
+Use the actual error codes currently implemented.
+
+## 9. DTO schemas
+
+Ensure useful generated schemas for the existing DTOs.
+
+Add OpenAPI annotations only where they materially improve documentation.
+
+For example:
+
+    @Schema
+    @Operation
+    @ApiResponse
+    @Parameter
+
+Avoid annotation noise.
+
+Do not add a description to every trivial Java field if its meaning is already obvious.
+
+Focus annotations on things that are otherwise ambiguous:
+
+- bbox format
+- expectedVersion semantics
+- workspace deletion authorization
+- Area status/change type
+- geometry representation
+- JWT requirements
+- rate-limit behavior
+
+## 10. Geometry documentation
+
+Pay particular attention to the Area geometry contract.
+
+Inspect the actual DTO representation and document exactly what clients send/receive.
+
+If GeoJSON is used, document the actual structure.
+
+Do not claim generic GeoJSON support if the API only supports Polygon.
+
+Include a small example only if it matches the real DTO exactly.
+
+## 11. Optimistic concurrency documentation
+
+The API uses optimistic concurrency control.
+
+Document the actual expectedVersion mechanism on endpoints that require it.
+
+Explain concisely:
+
+    expectedVersion must match the current Area version;
+    otherwise the API returns 409 VERSION_CONFLICT.
+
+Do not change OCC behavior.
+
+## 12. Rate limiting
+
+Document the existing drawing/mutation rate limit behavior.
+
+Where applicable, document:
+
+    429 Too Many Requests
+
+and:
+
+    Retry-After
+
+Do not change the rate limiter.
+
+Do not add new rate limits.
+
+## 13. Actuator boundary
+
+Do NOT include Actuator endpoints as part of the product API documentation unless springdoc already does so intentionally.
+
+Prefer keeping:
+
+    /actuator/health
+    /actuator/prometheus
+
+outside the primary Snapland GIS OpenAPI specification.
+
+Do not change the existing metrics/Prometheus implementation.
+
+## 14. Tests
+
+Add focused integration tests for the OpenAPI setup.
+
+At minimum verify:
+
+    GET /v3/api-docs → 200 without JWT
+
+and that the returned specification contains important paths from the real API, such as:
+
+    /workspaces
+    /workspaces/{workspaceId}/areas
+
+using the actual generated path names.
+
+Also verify that:
+
+    /swagger-ui/index.html
+
+is accessible without authentication.
+
+Add a test that the OpenAPI document contains the bearerAuth security scheme.
+
+Do not attempt to test springdoc itself exhaustively.
+
+Do not weaken or remove any existing tests.
+
+Run the complete backend test suite after implementation.
+
+## 15. Documentation
+
+Update README.md.
+
+Add a small section such as:
+
+    ## API Documentation
+
+with:
+
+    Swagger UI:
+    http://localhost:8081/swagger-ui/index.html
+
+    OpenAPI JSON:
+    http://localhost:8081/v3/api-docs
+
+Explain briefly how to use JWT authorization:
+
+    1. Obtain a JWT using the existing login/register flow.
+    2. Open Swagger UI.
+    3. Click Authorize.
+    4. Provide the JWT.
+    5. Execute authenticated requests.
+
+Also update the project feature/bonus status if README currently lists OpenAPI/Swagger as future work.
+
+Inspect docs/DESIGN.md and update it only where useful.
+
+Update docs/TEST_CASES.md with the new Swagger/OpenAPI tests.
+
+Do not create another large documentation file solely for Swagger.
+
+## 16. Scope constraints
+
+Do NOT:
+
+- redesign existing REST endpoints
+- rename existing endpoints
+- change DTO contracts without necessity
+- change Area behavior
+- change OCC behavior
+- change authentication semantics
+- implement OAuth2
+- implement password authentication
+- add AsyncAPI
+- add GraphQL
+- add API versioning
+- add a manually maintained duplicate OpenAPI YAML
+- expose Actuator unnecessarily
+- add frontend Swagger integration
+- add unrelated refactoring
+- add new external services
+
+Keep this task focused on documenting the API that already exists.
+
+## 17. Verification
+
+After implementation:
+
+1. Run the complete backend test suite.
+2. Report exact test count, failures, errors, and skipped tests.
+3. Confirm:
+
+       /swagger-ui/index.html
+
+   works without authentication.
+
+4. Confirm:
+
+       /v3/api-docs
+
+   works without authentication.
+
+5. Confirm protected business APIs remain protected.
+6. Confirm bearerAuth appears in the generated OpenAPI document.
+7. Confirm Swagger UI can authorize using an existing JWT.
+8. List all files created/modified.
+9. List all dependencies added.
+10. List controllers/endpoints represented in OpenAPI.
+11. Report any endpoints intentionally excluded.
+12. Report any deviations from this approved scope.
+
+Do not perform unrelated cleanup.

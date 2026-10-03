@@ -33,6 +33,7 @@ This repository is a take-home assignment implementing a simplified, prototype-g
 | Workspace membership / role-based access | Not implemented — known limitation |
 | Password-based authentication | Not implemented — prototype only |
 | GovMap integration | Not implemented — see [Map Providers](#map-providers) |
+| OpenAPI / Swagger UI | Implemented — `/swagger-ui/index.html` and `/v3/api-docs`; JWT bearer auth in Swagger UI |
 | Frontend tests | Not implemented |
 
 ---
@@ -392,9 +393,67 @@ cd backend
 | `DeletedAreasIntegrationTest` | Deleted areas API: deleted area appears, active area excluded, viewport exclusion, restore removes from list, deletedAt timestamp |
 | `PermanentDeleteIntegrationTest` | Physical removal, AreaVersion purge, ACTIVE area rejection, auth requirement, workspace scoping, double-delete 404, ABA stale-version VERSION_CONFLICT, unknown workspace, stale expectedVersion, response body |
 | `SchemaIntegrationTest` | Database schema constraints and PostGIS spatial queries |
+| `OpenApiIntegrationTest` | OpenAPI spec accessible without auth; contains workspace paths; bearerAuth scheme present; actuator paths excluded |
 | `SnaplandGisApplicationTests` | Spring context loads |
 
-**158 integration tests, 0 failures** (verified by `./mvnw test`). Frontend tests: not implemented.
+**163 integration tests, 0 failures** (verified by `./mvnw test`). Frontend tests: not implemented.
+
+---
+
+## API Documentation
+
+Swagger UI (requires the backend to be running):
+
+```
+http://localhost:8081/swagger-ui/index.html
+```
+
+OpenAPI JSON specification:
+
+```
+http://localhost:8081/v3/api-docs
+```
+
+Both endpoints are public and do not require authentication.
+
+### JWT authorization in Swagger UI
+
+1. Obtain a JWT — use **POST /auth/register** (new user) or **POST /auth/login** (existing user) in Swagger UI.
+2. Copy the `token` value from the response.
+3. Click the **Authorize** button (🔓) near the top of the page.
+4. Paste the token into the **bearerAuth** field and click **Authorize**.
+5. All subsequent requests from Swagger UI will include `Authorization: Bearer <token>`.
+
+### Verifying the Swagger documentation
+
+**Automated tests:**
+
+```bash
+cd backend && mvn test -Dtest=OpenApiIntegrationTest
+```
+
+Runs 5 integration tests against a real PostGIS container: public access to `/v3/api-docs` and `/swagger-ui/index.html`, workspace paths present, `bearerAuth` scheme declared, actuator paths excluded.
+
+**Manual inspection:**
+
+Start the backend (`mvn spring-boot:run`), then open `http://localhost:8081/swagger-ui/index.html`.
+
+To try authenticated endpoints, obtain a dev token and paste it into the Authorize dialog:
+
+```bash
+curl -s "http://localhost:8081/dev/token?username=alice"
+```
+
+> Note: `POST /dev/token` is hidden from the spec (`@Hidden`) but remains active in the running application.
+
+### WebSocket boundary
+
+`/ws` is the authenticated STOMP/WebSocket endpoint and is outside the OpenAPI REST specification. Real-time events are delivered over STOMP on these per-workspace topics (not REST endpoints):
+
+| Topic | Events |
+|-------|--------|
+| `/topic/workspace/{workspaceId}` | `AREA_CREATED`, `AREA_UPDATED`, `AREA_DELETED`, `AREA_RESTORED`, `AREA_PERMANENTLY_DELETED`, `WORKSPACE_DELETED` |
+| `/topic/workspace/{workspaceId}/presence` | `PRESENCE_JOINED`, `PRESENCE_LEFT` |
 
 ---
 
@@ -458,7 +517,7 @@ These are deliberate prototype constraints, not defects.
 | No workspace authorization | All authenticated users can access all workspaces |
 | Single-instance WebSocket broker | Spring `SimpleBroker` does not fan out across multiple backend instances; this also means presence is per-instance — users connected to different instances will not see each other |
 | Redis not integrated | Redis runs in `docker-compose` but has no application code |
-| No OpenAPI documentation | No Swagger UI or OpenAPI spec |
+| No AsyncAPI documentation | WebSocket/STOMP topics are not covered by the OpenAPI spec; no AsyncAPI document exists |
 | No frontend tests | Angular components have no unit or e2e tests |
 | GovMap not integrated | Esri World Imagery used as a temporary tile source |
 | In-process rate limiter only | Drawing action rate limit is single-JVM and resets on restart; not effective across multiple instances |
@@ -549,7 +608,6 @@ Items designed but not yet implemented:
 - GovMap tile integration (requires a verified, officially documented tile endpoint for aerial imagery)
 - Spatial queries: find areas near a point (proximity / distance search)
 - Role-based access control within workspaces
-- OpenAPI specification and Swagger UI
 - Frontend component tests and e2e tests
 - Production deployment configuration (Docker images, Kubernetes manifests)
 

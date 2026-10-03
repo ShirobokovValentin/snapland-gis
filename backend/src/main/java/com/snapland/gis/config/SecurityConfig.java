@@ -31,6 +31,7 @@ public class SecurityConfig {
                 // Prometheus scraping endpoint: permit-all is a prototype simplification.
                 // Production: restrict to an internal network or separate management port.
                 .requestMatchers("/actuator/prometheus").permitAll()
+                .requestMatchers("/swagger-ui/**", "/swagger-ui.html", "/v3/api-docs/**").permitAll()
                 .requestMatchers("/auth/**").permitAll()
                 .requestMatchers("/dev/token").permitAll()
                 .requestMatchers("/ws/**").permitAll()

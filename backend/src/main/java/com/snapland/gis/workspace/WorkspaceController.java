@@ -2,6 +2,8 @@ package com.snapland.gis.workspace;
 
 import com.snapland.gis.workspace.dto.CreateWorkspaceRequest;
 import com.snapland.gis.workspace.dto.WorkspaceResponse;
+import io.swagger.v3.oas.annotations.Operation;
+import io.swagger.v3.oas.annotations.responses.ApiResponse;
 import jakarta.validation.Valid;
 import org.springframework.http.HttpStatus;
 import org.springframework.security.core.annotation.AuthenticationPrincipal;
@@ -41,6 +43,12 @@ public class WorkspaceController {
         return workspaceService.createWorkspace(request.name(), userId);
     }
 
+    @Operation(
+        summary = "Delete workspace",
+        description = "Permanently deletes the workspace and all its Areas. Only the workspace creator can perform this operation; other authenticated users receive 403.")
+    @ApiResponse(responseCode = "204", description = "Deleted")
+    @ApiResponse(responseCode = "403", description = "WORKSPACE_ACCESS_DENIED — caller is not the workspace creator")
+    @ApiResponse(responseCode = "404", description = "WORKSPACE_NOT_FOUND")
     @DeleteMapping("/{id}")
     @ResponseStatus(HttpStatus.NO_CONTENT)
     public void deleteWorkspace(@PathVariable UUID id,

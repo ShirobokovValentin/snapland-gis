@@ -3840,6 +3840,129 @@ These are automated integration tests covering workspace list, create, and delet
 
 ---
 
+## 5h. OpenAPI / Swagger Integration Tests
+
+These tests are implemented as Spring Boot integration tests in
+`OpenApiIntegrationTest` using Testcontainers (PostGIS) to start a real
+application context.
+
+---
+
+### TC-OPENAPI-001 — API docs endpoint is accessible without authentication
+
+**Class / method:** `OpenApiIntegrationTest.apiDocs_isAccessibleWithoutAuthentication`
+
+**Description:**
+Verifies that `GET /v3/api-docs` returns HTTP 200 without supplying an
+`Authorization` header. The OpenAPI specification must be publicly readable so
+that tooling and reviewers can consume it without a JWT.
+
+**Preconditions:**
+- Application started with a running PostGIS container.
+- No `Authorization` header in the request.
+
+**Steps:**
+1. `GET /v3/api-docs`
+
+**Expected result:**
+- HTTP 200 OK.
+
+**Automated:** Yes — `OpenApiIntegrationTest.apiDocs_isAccessibleWithoutAuthentication`
+
+---
+
+### TC-OPENAPI-002 — Swagger UI is accessible without authentication
+
+**Class / method:** `OpenApiIntegrationTest.swaggerUi_isAccessibleWithoutAuthentication`
+
+**Description:**
+Verifies that `GET /swagger-ui/index.html` returns HTTP 200 without
+authentication. The Swagger UI must be reachable by anyone evaluating the API.
+
+**Preconditions:**
+- Application started with a running PostGIS container.
+- No `Authorization` header in the request.
+
+**Steps:**
+1. `GET /swagger-ui/index.html`
+
+**Expected result:**
+- HTTP 200 OK.
+
+**Automated:** Yes — `OpenApiIntegrationTest.swaggerUi_isAccessibleWithoutAuthentication`
+
+---
+
+### TC-OPENAPI-003 — API docs contain workspace paths
+
+**Class / method:** `OpenApiIntegrationTest.apiDocs_containsWorkspacePaths`
+
+**Description:**
+Verifies that the generated OpenAPI document includes the core workspace and
+area paths. This is a smoke test that the annotation scanning picked up the
+relevant controllers.
+
+**Preconditions:**
+- Application started with a running PostGIS container.
+
+**Steps:**
+1. `GET /v3/api-docs`
+2. Inspect response body.
+
+**Expected result:**
+- Response body contains `"/workspaces"`.
+- Response body contains `"/workspaces/{workspaceId}/areas"`.
+
+**Automated:** Yes — `OpenApiIntegrationTest.apiDocs_containsWorkspacePaths`
+
+---
+
+### TC-OPENAPI-004 — API docs declare bearerAuth security scheme
+
+**Class / method:** `OpenApiIntegrationTest.apiDocs_containsBearerAuthScheme`
+
+**Description:**
+Verifies that the OpenAPI document declares the `bearerAuth` HTTP bearer JWT
+security scheme. Clients use this to discover the authentication mechanism and
+the Swagger UI uses it to render the "Authorize" button.
+
+**Preconditions:**
+- Application started with a running PostGIS container.
+
+**Steps:**
+1. `GET /v3/api-docs`
+2. Inspect response body.
+
+**Expected result:**
+- Response body contains `"bearerAuth"`.
+
+**Automated:** Yes — `OpenApiIntegrationTest.apiDocs_containsBearerAuthScheme`
+
+---
+
+### TC-OPENAPI-005 — API docs exclude actuator paths
+
+**Class / method:** `OpenApiIntegrationTest.apiDocs_actuatorPathsExcluded`
+
+**Description:**
+Verifies that Spring Actuator management endpoints are not included in the
+generated OpenAPI specification. Actuator endpoints are operational
+infrastructure and must not appear in the public API contract.
+
+**Preconditions:**
+- Application started with a running PostGIS container.
+
+**Steps:**
+1. `GET /v3/api-docs`
+2. Inspect response body.
+
+**Expected result:**
+- Response body does **not** contain `"/actuator"`.
+
+**Automated:** Yes — `OpenApiIntegrationTest.apiDocs_actuatorPathsExcluded`
+
+---
+
 ## 6. Discrepancies and Observations
 
 The following items describe gaps between the current prototype and the
@@ -3925,6 +4048,9 @@ an unclosed ring returns `400 INVALID_GEOMETRY`.
 | 24 | TC-AUDIT-003 | DELETE audit: actor, DELETED changeType and status |
 | 25 | TC-AUDIT-004 | RESTORE audit: actor is caller; version incremented |
 | 26 | TC-AUDIT-005 | Failed mutation creates no committed AreaVersion |
+| 27 | TC-OPENAPI-001 | Swagger/api-docs publicly accessible — prerequisite for tooling consumers |
+| 28 | TC-OPENAPI-004 | bearerAuth scheme declared — Swagger UI authorize button depends on this |
+| 29 | TC-OPENAPI-005 | Actuator paths excluded — prevents leaking operational endpoints |
 
 **Phase 2 — Validation and isolation**
 

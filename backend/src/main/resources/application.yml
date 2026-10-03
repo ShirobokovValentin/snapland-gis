@@ -30,6 +30,9 @@ app:
       max-actions: 50
       window: PT1M
 
+springdoc:
+  paths-to-exclude: /actuator/**
+
 management:
   endpoints:
     web:

@@ -258,6 +258,10 @@
   white-space: nowrap;
 }
 
+.editing-indicator {
+  background: rgba(180, 80, 0, 0.8);
+}
+
 .reconnecting-indicator {
   position: absolute;
   bottom: 60px;
@@ -423,4 +427,53 @@
 .context-menu-item:hover {
   background: #f0f4ff;
   color: #0066cc;
+}
+
+.context-menu-rename {
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.context-menu-rename-input {
+  width: 100%;
+  padding: 4px 6px;
+  font-size: 13px;
+  border: 1px solid #aaa;
+  border-radius: 3px;
+  box-sizing: border-box;
+  outline: none;
+}
+
+.context-menu-rename-input:focus {
+  border-color: #0066cc;
+}
+
+.context-menu-rename-actions {
+  display: flex;
+  gap: 4px;
+  justify-content: flex-end;
+}
+
+.context-menu-rename-save,
+.context-menu-rename-cancel {
+  padding: 3px 10px;
+  font-size: 12px;
+  border-radius: 3px;
+  cursor: pointer;
+  border: 1px solid #ccc;
+  background: white;
+}
+
+.context-menu-rename-save {
+  background: #0066cc;
+  color: white;
+  border-color: #0055aa;
+}
+
+.context-menu-rename-save:disabled,
+.context-menu-rename-cancel:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
 }

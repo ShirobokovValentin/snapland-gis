@@ -45,7 +45,6 @@ export class MapComponent implements AfterViewInit, OnDestroy {
   pendingLayer: L.Polygon | null = null;
 
   editingArea: Area | null = null;
-  editName = '';
   editLayer: L.Polygon | null = null;
   editSaving = false;
   deleteSaving = false;
@@ -59,8 +58,6 @@ export class MapComponent implements AfterViewInit, OnDestroy {
   deletedAreasLoading = false;
   deletedAreaProcessingId: string | null = null;
 
-  editVersionWarning = false;
-
   historyArea: Area | null = null;
   historyVersions: AreaVersionResponse[] = [];
   historyLoading = false;
@@ -70,7 +67,9 @@ export class MapComponent implements AfterViewInit, OnDestroy {
   private previewLayer: L.Polygon | null = null;
   private previewItems!: L.FeatureGroup;
 
-  contextMenu: { x: number; y: number; area: Area; polygon: L.Polygon } | null = null;
+  contextMenu: { x: number; y: number; area: Area; polygon: L.Polygon; mode: 'menu' | 'rename' } | null = null;
+  renameValue = '';
+  renameSaving = false;
 
   activeBaseMap: 'map' | 'satellite' = 'map';
   wsStatus: 'connected' | 'reconnecting' = 'connected';
@@ -102,6 +101,14 @@ export class MapComponent implements AfterViewInit, OnDestroy {
   private editHandler: any = null;
   private editOriginalPolygon: L.Polygon | null = null;
 
+  private readonly onKeyDown = (e: KeyboardEvent) => {
+    if (e.key === 'Escape') {
+      if (this.editingArea) {
+        this.cancelEdit();
+      }
+    }
+  };
+
   constructor(
     private areaService: AreaService,
     private realtimeService: RealtimeService,
@@ -114,11 +121,13 @@ export class MapComponent implements AfterViewInit, OnDestroy {
 
   ngAfterViewInit(): void {
     this.workspaceId = this.route.snapshot.paramMap.get('workspaceId')!;
+    document.addEventListener('keydown', this.onKeyDown);
     this.initMap();
     this.connectToRealtime();
   }
 
   ngOnDestroy(): void {
+    document.removeEventListener('keydown', this.onKeyDown);
     this.editHandler?.disable();
     this.map?.remove();
     this.realtimeService.disconnect();
@@ -150,7 +159,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
   }
 
   saveEdit(): void {
-    if (!this.editingArea || !this.editLayer || !this.editName.trim()) return;
+    if (!this.editingArea || !this.editLayer || this.editSaving || this.deleteSaving) return;
 
     if (this.editHandler) {
       this.editHandler.save();
@@ -162,7 +171,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     this.editSaving = true;
 
     this.areaService
-      .updateArea(this.workspaceId, this.editingArea.id, this.editingArea.currentVersion, this.editName.trim(), latlngs)
+      .updateArea(this.workspaceId, this.editingArea.id, this.editingArea.currentVersion, this.editingArea.name, latlngs)
       .subscribe({
         next: (area) => {
           this.editSaving = false;
@@ -506,7 +515,16 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     });
 
     this.map.on('moveend zoomend', () => this.loadViewport());
-    this.map.on('click contextmenu', () => {
+    this.map.on('click', () => {
+      if (this.contextMenu) {
+        this.contextMenu = null;
+        this.cdr.detectChanges();
+      }
+      if (this.editingArea) {
+        this.saveEdit();
+      }
+    });
+    this.map.on('contextmenu', () => {
       if (this.contextMenu) {
         this.contextMenu = null;
         this.cdr.detectChanges();
@@ -606,7 +624,6 @@ export class MapComponent implements AfterViewInit, OnDestroy {
       return;
     }
     if (event.type === 'AREA_UPDATED' && this.editingArea?.id === event.payload?.id) {
-      this.editVersionWarning = true;
       this.cdr.detectChanges();
     }
     if (event.type === 'AREA_PERMANENTLY_DELETED') {
@@ -635,6 +652,10 @@ export class MapComponent implements AfterViewInit, OnDestroy {
 
     polygon.on('mouseover', () => polygon.setStyle({ fillOpacity: 0.45 }));
     polygon.on('mouseout', () => polygon.setStyle({ fillOpacity: 0.2 }));
+    polygon.on('click', (e: L.LeafletMouseEvent) => {
+      L.DomEvent.stopPropagation(e);
+      this.startEdit(area, polygon);
+    });
 
     polygon.bindTooltip(
       `<strong>${area.name}</strong><br>${area.areaKm2.toFixed(3)} km²`,
@@ -643,7 +664,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
 
     polygon.on('contextmenu', (e: L.LeafletMouseEvent) => {
       L.DomEvent.stopPropagation(e);
-      this.contextMenu = { x: e.originalEvent.clientX, y: e.originalEvent.clientY, area, polygon };
+      this.contextMenu = { x: e.originalEvent.clientX, y: e.originalEvent.clientY, area, polygon, mode: 'menu' };
       this.cdr.detectChanges();
     });
 
@@ -666,14 +687,8 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     this.deleteSaving = true;
     this.cdr.detectChanges();
     this.areaService.deleteArea(this.workspaceId, area.id, area.currentVersion).subscribe({
-      next: (deleted) => {
+      next: () => {
         this.deleteSaving = false;
-        const coords = deleted.geometry.coordinates[0];
-        const latlngs = coords.map((c) => L.latLng(c[1], c[0]));
-        const grayPolygon = L.polygon(latlngs, { color: '#999999', weight: 2, opacity: 0.5, fillOpacity: 0.1 });
-        this.persistedItems.addLayer(grayPolygon);
-        this.deletedArea = deleted;
-        this.deletedLayer = grayPolygon;
         this.cdr.detectChanges();
       },
       error: (err) => {
@@ -698,12 +713,53 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     this.cdr.detectChanges();
   }
 
+  startContextMenuRename(): void {
+    if (!this.contextMenu) return;
+    this.renameValue = this.contextMenu.area.name;
+    this.contextMenu = { ...this.contextMenu, mode: 'rename' };
+    this.cdr.detectChanges();
+  }
+
+  saveRename(): void {
+    if (!this.contextMenu) return;
+    const name = this.renameValue.trim();
+    if (!name) return;
+    const { area, polygon } = this.contextMenu;
+    const latlngs = (area.geometry.coordinates[0] as [number, number][])
+      .map((c) => L.latLng(c[1], c[0]));
+    this.renameSaving = true;
+    this.cdr.detectChanges();
+    this.areaService.updateArea(this.workspaceId, area.id, area.currentVersion, name, latlngs).subscribe({
+      next: (updated) => {
+        this.renameSaving = false;
+        this.contextMenu = null;
+        this.persistedItems.removeLayer(polygon);
+        this.addPersistedArea(updated);
+        this.cdr.detectChanges();
+      },
+      error: (err) => {
+        this.renameSaving = false;
+        this.contextMenu = null;
+        this.cdr.detectChanges();
+        if (err.status === 409) {
+          alert('This area was modified by another user. Reloading the latest version.');
+          this.loadViewport();
+        } else {
+          this.handleMutationError(err, 'rename area');
+        }
+      },
+    });
+  }
+
   closeContextMenu(): void {
     this.contextMenu = null;
     this.cdr.detectChanges();
   }
 
   private startEdit(area: Area, polygon: L.Polygon): void {
+    if (this.editOriginalPolygon) {
+      this.persistedItems.addLayer(this.editOriginalPolygon);
+    }
     this.clearPending();
     this.clearDeletedArea();
     this.clearHistory();
@@ -719,8 +775,9 @@ export class MapComponent implements AfterViewInit, OnDestroy {
 
     this.editingArea = area;
     this.editLayer = editableLayer;
-    this.editName = area.name;
     this.editingAreaKm2 = computeGeodesicAreaKm2(latlngs);
+
+    editableLayer.on('click', (e: L.LeafletMouseEvent) => L.DomEvent.stopPropagation(e));
 
     this.editHandler = new (L as any).EditToolbar.Edit(this.map, {
       featureGroup: this.editItems,
@@ -752,10 +809,8 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     this.editingArea = null;
     this.editLayer = null;
     this.editOriginalPolygon = null;
-    this.editName = '';
     this.editSaving = false;
     this.deleteSaving = false;
-    this.editVersionWarning = false;
     this.editingAreaKm2 = null;
     this.cdr.detectChanges();
   }

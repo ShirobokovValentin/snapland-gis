@@ -20,9 +20,25 @@
       [style.left.px]="contextMenu.x"
       [style.top.px]="contextMenu.y"
     >
-      <button class="context-menu-item" (click)="contextMenuEdit()">Edit</button>
-      <button class="context-menu-item" (click)="contextMenuDelete()">Delete</button>
-      <button class="context-menu-item" (click)="contextMenuHistory()">History</button>
+      @if (contextMenu.mode === 'menu') {
+        <button class="context-menu-item" (click)="startContextMenuRename()">Rename</button>
+        <button class="context-menu-item" (click)="contextMenuDelete()">Delete</button>
+        <button class="context-menu-item" (click)="contextMenuHistory()">History</button>
+      } @else {
+        <div class="context-menu-rename">
+          <input
+            class="context-menu-rename-input"
+            [(ngModel)]="renameValue"
+            (keydown.enter)="saveRename()"
+            (keydown.escape)="closeContextMenu()"
+            autofocus
+          />
+          <div class="context-menu-rename-actions">
+            <button class="context-menu-rename-save" (click)="saveRename()" [disabled]="renameSaving || !renameValue.trim()">Save</button>
+            <button class="context-menu-rename-cancel" (click)="closeContextMenu()" [disabled]="renameSaving">Cancel</button>
+          </div>
+        </div>
+      }
     </div>
   }
 
@@ -49,9 +65,9 @@
     </div>
   }
 
-  @if (editingArea && editingAreaKm2 !== null) {
-    <div class="drawing-area-indicator">
-      Area: {{ editingAreaKm2 | number: '1.0-3' }} km²
+  @if (editingArea) {
+    <div class="drawing-area-indicator editing-indicator">
+      @if (editingAreaKm2 !== null) { Area: {{ editingAreaKm2 | number: '1.0-3' }} km² · }Editing — click outside to save, Esc to cancel
     </div>
   }
 
@@ -75,46 +91,6 @@
           [disabled]="!areaName.trim() || saving"
         >
           {{ saving ? 'Saving…' : 'Save' }}
-        </button>
-      </div>
-    </div>
-  }
-
-  @if (editingArea) {
-    <div class="area-panel">
-      <div class="area-panel-title">Edit Area</div>
-      <div class="area-preview">
-        v{{ editingArea.currentVersion }}
-        @if (editingAreaKm2 !== null) {
-          · {{ editingAreaKm2 | number: '1.0-3' }} km²
-        }
-      </div>
-      @if (editVersionWarning) {
-        <div class="edit-warning">A newer version was saved by another user.</div>
-      }
-      <input
-        [(ngModel)]="editName"
-        placeholder="Area name"
-        class="area-name-input"
-        [disabled]="editSaving || deleteSaving"
-      />
-      <div class="area-panel-actions">
-        <button class="btn btn-secondary" (click)="cancelEdit()" [disabled]="editSaving || deleteSaving">
-          Cancel
-        </button>
-        <button
-          class="btn btn-danger"
-          (click)="deleteArea()"
-          [disabled]="editSaving || deleteSaving"
-        >
-          {{ deleteSaving ? 'Deleting…' : 'Delete' }}
-        </button>
-        <button
-          class="btn btn-primary"
-          (click)="saveEdit()"
-          [disabled]="!editName.trim() || editSaving || deleteSaving"
-        >
-          {{ editSaving ? 'Saving…' : 'Save' }}
         </button>
       </div>
     </div>
@@ -203,18 +179,5 @@
     </div>
   }
 
-  @if (deletedArea) {
-    <div class="area-panel">
-      <div class="area-panel-title">Area Deleted</div>
-      <div class="area-preview">{{ deletedArea.name }}</div>
-      <div class="area-panel-actions">
-        <button class="btn btn-secondary" (click)="dismissDeleted()" [disabled]="restoreSaving">
-          Dismiss
-        </button>
-        <button class="btn btn-primary" (click)="restoreDeletedArea()" [disabled]="restoreSaving">
-          {{ restoreSaving ? 'Restoring…' : 'Restore' }}
-        </button>
-      </div>
-    </div>
-  }
+
 </div>

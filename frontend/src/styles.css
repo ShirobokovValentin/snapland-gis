@@ -9,3 +9,8 @@ body {
 .leaflet-interactive:focus {
   outline: none;
 }
+
+.leaflet-draw-tooltip,
+.leaflet-draw-actions {
+  display: none !important;
+}

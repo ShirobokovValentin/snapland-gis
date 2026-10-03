@@ -9,6 +9,8 @@ import com.snapland.gis.common.exception.UserAlreadyExistsException;
 import com.snapland.gis.common.exception.UserNotFoundException;
 import com.snapland.gis.common.exception.VersionConflictException;
 import com.snapland.gis.common.exception.WorkspaceNotFoundException;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.support.DefaultMessageSourceResolvable;
@@ -27,6 +29,14 @@ import java.util.UUID;
 public class GlobalExceptionHandler {
 
     private static final Logger log = LoggerFactory.getLogger(GlobalExceptionHandler.class);
+
+    private final Counter versionConflictCounter;
+
+    public GlobalExceptionHandler(MeterRegistry meterRegistry) {
+        this.versionConflictCounter = Counter.builder("area.version.conflict.total")
+                .description("Number of Area mutations rejected with VERSION_CONFLICT")
+                .register(meterRegistry);
+    }
 
     @ExceptionHandler(WorkspaceNotFoundException.class)
     public ResponseEntity<ApiError> handleWorkspaceNotFound(WorkspaceNotFoundException ex) {
@@ -48,6 +58,7 @@ public class GlobalExceptionHandler {
 
     @ExceptionHandler(VersionConflictException.class)
     public ResponseEntity<ApiError> handleVersionConflict(VersionConflictException ex) {
+        versionConflictCounter.increment();
         Map<String, Object> details = Map.of(
                 "areaId", ex.getAreaId(),
                 "expectedVersion", ex.getExpectedVersion(),

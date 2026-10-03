@@ -27,11 +27,12 @@ observed through its HTTP API and browser UI.
 - Real-time cross-browser synchronization of Area mutations
 - Per-user drawing action rate limiting (fixed-window, 50 mutations/minute/user)
 - Area mutation audit trail via AreaVersion (actor, action, timestamp, resulting state)
+- Custom Micrometer metrics (committed mutation counters, version conflict counter, rate limit rejection counter, active WebSocket session gauge) and Prometheus scrape endpoint
 
 **Explicitly out of scope (not yet implemented):**
 - Multi-instance scaling with Redis Pub/Sub
 - Presence and cursors
-- Operational metrics (Task 16)
+- WebSocket graceful degradation and reconnect (Task 16)
 
 ---
 
@@ -2711,6 +2712,226 @@ Two distinct users (User A = original Area creator, User B = separate actor) are
 **Expected Result:**
 - The PUT response is `400 Bad Request` with `code = "INVALID_GEOMETRY"`.
 - The AreaVersion count is unchanged (transaction was rolled back — no audit record for a failed mutation).
+
+---
+
+## 4g. Metrics Tests
+
+These tests verify that custom Micrometer metrics are correctly incremented by
+production code paths and that the Prometheus scrape endpoint is accessible.
+
+Counter assertions are relative (before/after a triggering operation) so that
+test ordering and shared-context counter accumulation do not affect correctness.
+
+### Shared Preconditions
+
+- Backend is running with the `test` profile.
+- `GET /actuator/prometheus` is accessible without authentication.
+
+---
+
+### TC-METRICS-001 — CREATE increments area.mutations.committed.total{change_type=CREATED}
+
+**ID:** TC-METRICS-001
+**Category:** API Black-Box
+**Priority:** P1
+
+**Steps:**
+1. Record current value of `area_mutations_committed_total{change_type="CREATED"}`.
+2. `POST /workspaces/{wid}/areas` with a valid polygon. Expect `201 Created`.
+3. Record the counter value again.
+
+**Expected Result:**
+- Counter increases by exactly 1.0.
+
+---
+
+### TC-METRICS-002 — UPDATE increments area.mutations.committed.total{change_type=UPDATED}
+
+**ID:** TC-METRICS-002
+**Category:** API Black-Box
+**Priority:** P1
+
+**Steps:**
+1. Create an Area (version 1).
+2. Record current value of `area_mutations_committed_total{change_type="UPDATED"}`.
+3. `PUT` the Area with `expectedVersion=1`. Expect `200 OK`.
+4. Record the counter value again.
+
+**Expected Result:**
+- Counter increases by exactly 1.0.
+
+---
+
+### TC-METRICS-003 — DELETE increments area.mutations.committed.total{change_type=DELETED}
+
+**ID:** TC-METRICS-003
+**Category:** API Black-Box
+**Priority:** P1
+
+**Steps:**
+1. Create an Area (version 1).
+2. Record current value of `area_mutations_committed_total{change_type="DELETED"}`.
+3. `DELETE` the Area with `expectedVersion=1`. Expect `200 OK`.
+4. Record the counter value again.
+
+**Expected Result:**
+- Counter increases by exactly 1.0.
+
+---
+
+### TC-METRICS-004 — RESTORE increments area.mutations.committed.total{change_type=RESTORED}
+
+**ID:** TC-METRICS-004
+**Category:** API Black-Box
+**Priority:** P1
+
+**Steps:**
+1. Create and update an Area (version 2).
+2. Record current value of `area_mutations_committed_total{change_type="RESTORED"}`.
+3. `POST .../versions/1/restore` with `expectedVersion=2`. Expect `200 OK`.
+4. Record the counter value again.
+
+**Expected Result:**
+- Counter increases by exactly 1.0.
+
+---
+
+### TC-METRICS-005 — VERSION_CONFLICT increments area.version.conflict.total
+
+**ID:** TC-METRICS-005
+**Category:** API Black-Box
+**Priority:** P1
+
+**Steps:**
+1. Create an Area (version 1).
+2. Record current value of `area_version_conflict_total`.
+3. `PUT` the Area with stale `expectedVersion=0`. Expect `409 Conflict` / `VERSION_CONFLICT`.
+4. Record the counter value again.
+
+**Expected Result:**
+- Counter increases by exactly 1.0.
+
+---
+
+### TC-METRICS-006 — Rate limit exceeded increments drawing.rate.limit.rejected.total
+
+**ID:** TC-METRICS-006
+**Category:** API Black-Box
+**Priority:** P1
+
+**Steps:**
+1. Exhaust the per-user drawing action quota (default 50 mutations).
+2. Record current value of `drawing_rate_limit_rejected_total`.
+3. Attempt another mutation. Expect `429 Too Many Requests`.
+4. Record the counter value again.
+
+**Expected Result:**
+- Counter increases by exactly 1.0.
+
+---
+
+### TC-METRICS-007 — Failed mutation (400) does not increment committed counter
+
+**ID:** TC-METRICS-007
+**Category:** API Black-Box
+**Priority:** P1
+
+**Steps:**
+1. Record current value of `area_mutations_committed_total{change_type="CREATED"}`.
+2. `POST /workspaces/{wid}/areas` with a self-intersecting polygon. Expect `400 INVALID_GEOMETRY`.
+3. Record the counter value again.
+
+**Expected Result:**
+- Counter value is unchanged (transaction was rolled back; no commit occurred).
+
+---
+
+### TC-METRICS-008 — GET /actuator/prometheus returns 200 with expected metrics
+
+**ID:** TC-METRICS-008
+**Category:** API Black-Box
+**Priority:** P1
+
+**Steps:**
+1. `GET /actuator/prometheus` (no Authorization header required).
+
+**Expected Result:**
+- HTTP `200 OK`.
+- `Content-Type` header starts with `text/plain`.
+- Response body contains `area_mutations_committed_total`.
+- Response body contains `change_type="CREATED"`.
+- Response body contains `area_version_conflict_total`.
+- Response body contains `drawing_rate_limit_rejected_total`.
+- Response body contains `websocket_connections_active`.
+
+---
+
+### TC-METRICS-009 — Authenticated STOMP connect increments websocket.connections.active
+
+**ID:** TC-METRICS-009
+**Category:** API Black-Box
+**Priority:** P1
+
+**Steps:**
+1. Record current value of `websocket_connections_active`.
+2. Connect a STOMP client with a valid JWT in the CONNECT frame.
+3. Record the gauge value after the CONNECTED frame is received.
+
+**Expected Result:**
+- Gauge increases by exactly 1.
+
+---
+
+### TC-METRICS-010 — STOMP disconnect decrements websocket.connections.active
+
+**ID:** TC-METRICS-010
+**Category:** API Black-Box
+**Priority:** P1
+
+**Steps:**
+1. Record baseline gauge value (before connecting).
+2. Connect a STOMP client with a valid JWT.
+3. Confirm gauge incremented to baseline + 1.
+4. Disconnect the STOMP client.
+5. Record the gauge value after disconnect.
+
+**Expected Result:**
+- Gauge returns to baseline value.
+
+---
+
+### TC-METRICS-011 — Rejected STOMP connect (invalid JWT) does not change the gauge
+
+**ID:** TC-METRICS-011
+**Category:** API Black-Box
+**Priority:** P1
+
+**Steps:**
+1. Record current gauge value.
+2. Attempt to connect a STOMP client with an invalid or wrong-secret JWT. Expect the connection to fail.
+3. Record the gauge value.
+
+**Expected Result:**
+- Gauge value is unchanged.
+
+---
+
+### TC-METRICS-012 — Duplicate disconnect event does not make the gauge negative
+
+**ID:** TC-METRICS-012
+**Category:** API Black-Box
+**Priority:** P2
+
+**Steps:**
+1. Record initial gauge value.
+2. Connect a STOMP client. Confirm gauge = initial + 1.
+3. Disconnect the client normally. Confirm gauge = initial.
+4. Simulate a duplicate disconnect event for the same session ID (session already removed from the active set).
+
+**Expected Result:**
+- Gauge value equals the initial value and is greater than or equal to 0.
+- Gauge never goes negative regardless of duplicate disconnect events.
 
 ---
 

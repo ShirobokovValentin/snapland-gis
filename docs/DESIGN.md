@@ -1679,7 +1679,7 @@ audit table. User registration is implicitly recorded by the `users` row
 |---|---|
 | Version history + Area mutation audit | AreaVersion (PostgreSQL, transactional) |
 | Request-level tracing and error recording | Application logs (SLF4J, structured, includes `traceId`) |
-| Operational counters, latency, health | Metrics — see Metrics section (planned Task 16) |
+| Operational counters, latency, health | Metrics — see Metrics section |
 
 ### Application Logging
 
@@ -1722,6 +1722,38 @@ Relevant SLOs include:
 Viewport Query: p95 \< 300 ms
 
 Area Event propagation: p95 \< 200 ms
+
+#### Prototype Implementation
+
+The following custom Micrometer metrics are implemented and exposed at
+`GET /actuator/prometheus` in the Prometheus text format:
+
+| Metric | Type | Tags | Description |
+|--------|------|------|-------------|
+| `area.mutations.committed.total` | Counter | `change_type` (CREATED / UPDATED / DELETED / RESTORED) | Incremented after each successful DB commit for an Area mutation. Uses `@TransactionalEventListener(AFTER_COMMIT)` so only durable mutations are counted. Pre-registered at startup so all `change_type` variants appear in Prometheus output at zero. |
+| `area.version.conflict.total` | Counter | — | Incremented each time a `409 VERSION_CONFLICT` response is returned. |
+| `drawing.rate.limit.rejected.total` | Counter | — | Incremented each time a mutation is rejected by the drawing action rate limiter (`429 Too Many Requests`). |
+| `websocket.connections.active` | Gauge | — | Number of active authenticated STOMP WebSocket sessions. Backed by a `ConcurrentHashMap.newKeySet()`. Incremented on `SessionConnectedEvent` (fires after the STOMP CONNECTED frame is sent — rejected JWT attempts do not fire this event). Decremented on `SessionDisconnectEvent`. The Set makes removal idempotent so the gauge cannot go negative from duplicate disconnect events. |
+
+Spring Boot auto-configuration also provides JVM, process, system, Logback,
+HikariCP, and Tomcat metrics, available at the same endpoint.
+
+**Prometheus endpoint:** `GET /actuator/prometheus` returns Prometheus text
+format (dots converted to underscores in metric names, e.g.,
+`area_mutations_committed_total`). The endpoint is permit-all in the prototype
+as a simplification. In production it should be restricted to an internal
+network, a separate management port, or an infrastructure ACL.
+
+**Metric cardinality:** No metric uses dynamic tags derived from user identity,
+workspace ID, area ID, geometry, or request payload. All cardinality is fixed
+at startup or bounded by the small set of `ChangeType` enum values.
+
+**No database writes for metrics.** All metric state is held in-process in
+Micrometer's `MeterRegistry`. Metrics state is not durable across restarts.
+
+**Task 16 (future work):** WebSocket graceful degradation and reconnect
+(detect disconnect, reconnect, re-authenticate STOMP, re-subscribe, reload
+viewport, converge state). Not yet implemented.
 
 ### Health Checks
 

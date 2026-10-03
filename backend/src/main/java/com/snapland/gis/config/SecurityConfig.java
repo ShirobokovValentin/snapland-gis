@@ -28,6 +28,9 @@ public class SecurityConfig {
                 .sessionCreationPolicy(SessionCreationPolicy.STATELESS))
             .authorizeHttpRequests(auth -> auth
                 .requestMatchers("/actuator/health").permitAll()
+                // Prometheus scraping endpoint: permit-all is a prototype simplification.
+                // Production: restrict to an internal network or separate management port.
+                .requestMatchers("/actuator/prometheus").permitAll()
                 .requestMatchers("/auth/**").permitAll()
                 .requestMatchers("/dev/token").permitAll()
                 .requestMatchers("/ws/**").permitAll()

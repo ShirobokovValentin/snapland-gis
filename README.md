@@ -24,6 +24,7 @@ This repository is a take-home assignment implementing a simplified, prototype-g
 | Satellite tile layer | Implemented — Esri World Imagery (temporary; see [Map Providers](#map-providers)) |
 | Per-user drawing action rate limiting | Implemented — 50 mutations/minute/user; fixed-window in-process limiter |
 | Area mutation audit trail | Implemented — AreaVersion records actor, action, timestamp, and resulting state for every committed mutation |
+| Custom Micrometer metrics + Prometheus endpoint | Implemented — committed mutation counters (by change type), version conflict counter, rate limit rejection counter, active WebSocket session gauge; exposed at `/actuator/prometheus` |
 | Workspace membership authorization | Not implemented — known limitation |
 | Password-based authentication | Not implemented — prototype only |
 | GovMap integration | Not implemented — see [Map Providers](#map-providers) |
@@ -218,6 +219,7 @@ All area and version endpoints require a valid JWT in the `Authorization: Bearer
 | Method | Path | Description |
 |--------|------|-------------|
 | `GET` | `/actuator/health` | Liveness / readiness |
+| `GET` | `/actuator/prometheus` | Prometheus metrics scrape endpoint |
 
 There is no OpenAPI / Swagger UI.
 
@@ -338,10 +340,11 @@ cd backend
 | `AuthIntegrationTest` | Registration, login, duplicate detection, JWT claims, workspace membership |
 | `DrawingRateLimitIntegrationTest` | Per-user quota enforcement, 429 response contract, independent quotas, window reset, no DB write on reject, failed mutations count |
 | `AreaAuditIntegrationTest` | AreaVersion audit trail: exact actor per mutation type, changeType, version, timestamp; failed mutation creates no committed version |
+| `MetricsIntegrationTest` | Custom Micrometer metrics: committed mutation counters (all 4 change types), version conflict counter, rate limit rejection counter, Prometheus scrape endpoint, WebSocket session gauge (connect / disconnect / rejected connect / duplicate disconnect) |
 | `SchemaIntegrationTest` | Database schema constraints and PostGIS spatial queries |
 | `SnaplandGisApplicationTests` | Spring context loads |
 
-**108 integration tests, 0 failures** (verified by `./mvnw test`). Frontend tests: not implemented.
+**120 integration tests, 0 failures** (verified by `./mvnw test`). Frontend tests: not implemented.
 
 ---
 
@@ -381,6 +384,7 @@ A partial GiST spatial index covers `area.geometry WHERE status = 'ACTIVE'`. Thi
 | Input validation | Bean Validation on all request DTOs; polygon validity enforced via JTS before persistence |
 | Drawing action rate limiting | Fixed-window per-user limiter (50/min default); enforced as a Spring MVC interceptor; returns `429` with `Retry-After` header |
 | Area mutation audit trail | Every committed Area mutation (create/update/delete/restore) writes an immutable AreaVersion row recording the authenticated actor (`created_by`), action (`change_type`), timestamp (`created_at`), and full resulting Area state |
+| Prometheus endpoint | `/actuator/prometheus` permit-all (prototype simplification); `health` and `prometheus` are the only actuator endpoints exposed |
 | 401 handling | Angular interceptor clears the stored token and redirects to `/auth` on any 401 response |
 
 **Known gap**: Workspace membership is not enforced in `AreaService`. Any authenticated user can read or mutate areas in any workspace. This is documented in `docs/DESIGN.md` as a known limitation of the prototype.
@@ -403,6 +407,7 @@ These are deliberate prototype constraints, not defects.
 | GovMap not integrated | Esri World Imagery used as a temporary tile source |
 | In-process rate limiter only | Drawing action rate limit is single-JVM and resets on restart; not effective across multiple instances |
 | Audit trail covers Area mutations only | Non-Area activity (login, read requests) has no dedicated persistent audit trail. User registration is implicitly recorded by `users.created_at`. Login has no persistent trace. |
+| Prometheus endpoint is unauthenticated | `/actuator/prometheus` is permit-all as a prototype simplification. In production, restrict to an internal network, a separate management port, or an infrastructure ACL. |
 
 ---
 
@@ -416,6 +421,7 @@ The design document (`docs/DESIGN.md`) describes the intended production path. W
 4. **Production rate limiting** — move the in-process drawing action rate limiter to the API Gateway with a shared backing store (e.g., Redis sliding window) to enforce limits across all instances and survive restarts.
 5. **Secret management** — rotate the JWT secret; manage `JWT_SECRET` through a secrets manager (Vault, AWS KMS, etc.).
 6. **TLS** — terminate HTTPS / WSS at a load balancer or reverse proxy.
+7. **Prometheus endpoint security** — restrict `/actuator/prometheus` to an internal network, a separate management port, or an infrastructure ACL (Prometheus scraper, not public browsers).
 
 ---
 
@@ -430,6 +436,7 @@ snapland-gis/
 │   │   ├── common/        # Exception hierarchy, GlobalExceptionHandler, ApiError
 │   │   ├── config/        # SecurityConfig, ClockConfig, JwtProperties, PrototypeProperties
 │   │   ├── ratelimit/     # DrawingRateLimiter, DrawingRateLimitInterceptor, DrawingRateLimitProperties
+│   │   ├── metrics/       # AreaMetricsListener, WebSocketSessionMetrics
 │   │   ├── dev/           # DevProperties, DevDataInitializer, DevTokenController
 │   │   ├── realtime/      # WebSocketConfig, JwtChannelInterceptor, AreaEventRelay
 │   │   ├── user/          # User entity, UserRepository
@@ -474,6 +481,7 @@ snapland-gis/
 
 Items designed but not yet implemented:
 
+- WebSocket graceful degradation and reconnect (detect disconnect, reconnect, re-authenticate STOMP, re-subscribe, reload viewport, converge state)
 - Redis Pub/Sub fan-out for horizontal WebSocket scaling
 - Workspace membership authorization
 - Password-based (or OAuth2-backed) authentication

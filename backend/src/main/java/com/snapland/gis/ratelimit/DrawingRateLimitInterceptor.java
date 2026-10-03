@@ -1,6 +1,8 @@
 package com.snapland.gis.ratelimit;
 
 import com.snapland.gis.common.exception.RateLimitExceededException;
+import io.micrometer.core.instrument.Counter;
+import io.micrometer.core.instrument.MeterRegistry;
 import jakarta.servlet.http.HttpServletRequest;
 import jakarta.servlet.http.HttpServletResponse;
 import org.springframework.security.core.Authentication;
@@ -43,9 +45,13 @@ public class DrawingRateLimitInterceptor implements HandlerInterceptor {
     );
 
     private final DrawingRateLimiter rateLimiter;
+    private final Counter rejectedCounter;
 
-    public DrawingRateLimitInterceptor(DrawingRateLimiter rateLimiter) {
+    public DrawingRateLimitInterceptor(DrawingRateLimiter rateLimiter, MeterRegistry meterRegistry) {
         this.rateLimiter = rateLimiter;
+        this.rejectedCounter = Counter.builder("drawing.rate.limit.rejected.total")
+                .description("Number of drawing action requests rejected by the rate limiter")
+                .register(meterRegistry);
     }
 
     @Override
@@ -62,6 +68,7 @@ public class DrawingRateLimitInterceptor implements HandlerInterceptor {
         UUID userId = UUID.fromString(jwtAuth.getToken().getSubject());
         long retryAfterSeconds = rateLimiter.tryConsume(userId);
         if (retryAfterSeconds > 0) {
+            rejectedCounter.increment();
             throw new RateLimitExceededException(retryAfterSeconds);
         }
         return true;

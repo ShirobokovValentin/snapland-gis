@@ -8,6 +8,7 @@ import { AuthService } from '../auth/auth.service';
 @Injectable({ providedIn: 'root' })
 export class RealtimeService {
   private client: Client | null = null;
+  private onOffline: (() => void) | null = null;
 
   constructor(private authService: AuthService) {}
 
@@ -18,10 +19,15 @@ export class RealtimeService {
     onStatusChange: (status: 'connected' | 'reconnecting') => void,
     onPresenceEvent: (event: PresenceEventMessage) => void,
   ): void {
+    this.onOffline = () => onStatusChange('reconnecting');
+    window.addEventListener('offline', this.onOffline);
+
     let firstConnect = true;
     this.client = new Client({
       brokerURL: environment.wsUrl,
       reconnectDelay: 3000,
+      heartbeatIncoming: 5000,
+      heartbeatOutgoing: 5000,
       beforeConnect: () => {
         const token = this.authService.getToken();
         if (!token) {
@@ -67,6 +73,10 @@ export class RealtimeService {
   }
 
   disconnect(): void {
+    if (this.onOffline) {
+      window.removeEventListener('offline', this.onOffline);
+      this.onOffline = null;
+    }
     this.client?.deactivate();
     this.client = null;
   }

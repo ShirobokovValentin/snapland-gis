@@ -1751,9 +1751,19 @@ at startup or bounded by the small set of `ChangeType` enum values.
 **No database writes for metrics.** All metric state is held in-process in
 Micrometer's `MeterRegistry`. Metrics state is not durable across restarts.
 
-**Task 16 (future work):** WebSocket graceful degradation and reconnect
-(detect disconnect, reconnect, re-authenticate STOMP, re-subscribe, reload
-viewport, converge state). Not yet implemented.
+#### WebSocket Reconnect Lifecycle
+
+The frontend `RealtimeService` uses `@stomp/stompjs` with automatic reconnect (3 s delay, no exponential backoff).
+
+**Token refresh on reconnect:** The `beforeConnect` hook reads the current JWT before every connection attempt via `AuthService.getToken()`. This ensures reconnects always use the live token — not the one captured at initial connection time.
+
+**Infinite reconnect loop protection:** If `getToken()` returns `null` (cleared by the REST 401 interceptor after JWT expiry, or by logout), `beforeConnect` calls `client.deactivate()` via `setTimeout` to stop further reconnect attempts without synchronous reentrancy.
+
+**Status indicator:** `RealtimeService.connect()` accepts an `onStatusChange` callback. `MapComponent` sets `wsStatus: 'connected' | 'reconnecting'`. A "Reconnecting realtime updates…" banner is shown at the bottom-centre of the map while disconnected; it clears on reconnect.
+
+**Reconciliation on reconnect:** The `onReconnect` callback calls `loadViewport()`, which issues a REST `GET` to reload all active Areas for the current viewport. Full `persistedItems` layer replacement (clear + reload) handles any missed `AREA_CREATED`, `AREA_UPDATED`, `AREA_DELETED`, or `AREA_RESTORED` events without event replay. `drawnItems`, `editItems`, and `previewItems` are not touched during reconciliation.
+
+**Intentional-disconnect guard:** `disconnect()` sets `this.client = null` synchronously before calling `deactivate()`. The `onWebSocketClose` callback checks `this.client !== null` before calling `onStatusChange('reconnecting')`, preventing a spurious "Reconnecting" banner after deliberate logout or component destroy.
 
 ### Health Checks
 

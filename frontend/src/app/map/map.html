@@ -16,6 +16,10 @@
 
   <button class="logout-btn" (click)="logout()">Sign out</button>
 
+  @if (wsStatus === 'reconnecting') {
+    <div class="reconnecting-indicator">Reconnecting realtime updates…</div>
+  }
+
   @if (isDrawing && liveDrawArea !== null) {
     <div class="drawing-area-indicator">
       Area: {{ liveDrawArea | number: '1.0-3' }} km²

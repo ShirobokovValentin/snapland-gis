@@ -28,11 +28,11 @@ observed through its HTTP API and browser UI.
 - Per-user drawing action rate limiting (fixed-window, 50 mutations/minute/user)
 - Area mutation audit trail via AreaVersion (actor, action, timestamp, resulting state)
 - Custom Micrometer metrics (committed mutation counters, version conflict counter, rate limit rejection counter, active WebSocket session gauge) and Prometheus scrape endpoint
+- WebSocket graceful degradation and reconnect (status indicator, token refresh on reconnect, viewport reconciliation after reconnect)
 
 **Explicitly out of scope (not yet implemented):**
 - Multi-instance scaling with Redis Pub/Sub
 - Presence and cursors
-- WebSocket graceful degradation and reconnect (Task 16)
 
 ---
 
@@ -2932,6 +2932,270 @@ test ordering and shared-context counter accumulation do not affect correctness.
 **Expected Result:**
 - Gauge value equals the initial value and is greater than or equal to 0.
 - Gauge never goes negative regardless of duplicate disconnect events.
+
+---
+
+## 5a. WebSocket Reconnect Manual Tests
+
+These tests cover WebSocket graceful degradation and reconnect behavior.
+All tests require two browser tabs or windows (A and B) open on the same
+Workspace, both authenticated. Network interruption is simulated by using
+the browser DevTools network throttle (Offline mode) or by stopping/starting
+the backend process. All tests are manual UI tests.
+
+### Shared Preconditions
+
+- Backend and frontend are both running.
+- User is logged in (valid JWT stored in localStorage).
+- At least one Area exists in the workspace and is visible in the viewport.
+- Both tabs/windows (where applicable) are showing the same map region.
+
+---
+
+### TC-WS-RECONNECT-001 — Reconnecting banner appears when WebSocket connection is lost
+
+**Type:** UI Manual
+**Priority:** High
+
+**Preconditions:**
+- Application is open and map is loaded. WebSocket is connected (no banner visible).
+
+**Steps:**
+1. Open DevTools → Network → set throttle to "Offline".
+2. Wait 3–5 seconds for the WebSocket connection to drop.
+3. Observe the map.
+
+**Expected Result:**
+- A "Reconnecting realtime updates…" banner appears near the bottom-centre of the map.
+- The banner has an amber/brown background and light text.
+- The map, existing Areas, and all UI controls remain fully interactive.
+
+---
+
+### TC-WS-RECONNECT-002 — Reconnecting banner disappears when WebSocket reconnects
+
+**Type:** UI Manual
+**Priority:** High
+
+**Preconditions:**
+- TC-WS-RECONNECT-001 conditions: network is offline and the banner is visible.
+
+**Steps:**
+1. Restore the network (set throttle back to "No throttling").
+2. Wait for the STOMP client to reconnect (up to ~10 s).
+3. Observe the map.
+
+**Expected Result:**
+- The "Reconnecting realtime updates…" banner disappears.
+- No banner is shown after reconnect.
+
+---
+
+### TC-WS-RECONNECT-003 — Viewport is reloaded from REST after reconnect
+
+**Type:** UI Manual
+**Priority:** High
+
+**Preconditions:**
+- Browser A and browser B show the same workspace.
+- Network on B is set to Offline; the reconnecting banner is visible in B.
+
+**Steps:**
+1. In A (online): create a new Area visible in the current viewport.
+2. In B: restore the network.
+3. Wait for B to reconnect.
+4. Observe the map in B.
+
+**Expected Result:**
+- The Area created in A (step 1) appears in B after reconnect, without any manual refresh.
+- B obtained this Area via REST reconciliation (viewport reload), not via a missed WebSocket event.
+
+---
+
+### TC-WS-RECONNECT-004 — Updated Area reflects new state after reconnect reconciliation
+
+**Type:** UI Manual
+**Priority:** High
+
+**Preconditions:**
+- An Area "Original Name" is visible in both A and B.
+- Network on B is Offline; banner is visible.
+
+**Steps:**
+1. In A: rename the Area to "Updated Name" and save.
+2. In B: restore the network and wait for reconnect.
+3. Observe the Area popup in B.
+
+**Expected Result:**
+- The Area in B shows "Updated Name" after reconnect.
+- No manual refresh is needed.
+
+---
+
+### TC-WS-RECONNECT-005 — Deleted Area disappears after reconnect reconciliation
+
+**Type:** UI Manual
+**Priority:** High
+
+**Preconditions:**
+- An Area is visible in both A and B.
+- Network on B is Offline; banner is visible.
+
+**Steps:**
+1. In A: delete the Area.
+2. In B: restore the network and wait for reconnect.
+3. Observe the map in B.
+
+**Expected Result:**
+- The Area is no longer visible in B after reconnect.
+- No manual refresh is needed.
+
+---
+
+### TC-WS-RECONNECT-006 — Unsaved drawn polygon is preserved during reconnect
+
+**Type:** UI Manual
+**Priority:** High
+
+**Preconditions:**
+- The user has drawn a polygon (not yet saved) so the "New Area" panel is visible.
+- Network is then set to Offline; the reconnecting banner appears.
+
+**Steps:**
+1. Draw a polygon. The "New Area" panel is visible with a name input.
+2. Set network to Offline. Wait for the banner to appear.
+3. Restore network. Wait for reconnect.
+4. Observe the drawn polygon and the "New Area" panel.
+
+**Expected Result:**
+- The unsaved drawn polygon and the "New Area" panel are still present after reconnect.
+- The drawn polygon has not been removed or replaced.
+- The user can still save the polygon after reconnect.
+
+---
+
+### TC-WS-RECONNECT-007 — Active edit (unsaved) is preserved during reconnect
+
+**Type:** UI Manual
+**Priority:** High
+
+**Preconditions:**
+- The user has an Area open in the Edit panel and has modified its geometry or name (not yet saved).
+- Network is then set to Offline; the reconnecting banner appears.
+
+**Steps:**
+1. Open an Area for editing. Modify the name or drag a vertex.
+2. Set network to Offline. Wait for the banner to appear.
+3. Restore network. Wait for reconnect.
+4. Observe the Edit panel and the edited geometry.
+
+**Expected Result:**
+- The Edit panel is still open with the user's unsaved changes after reconnect.
+- The edited geometry on the map is unchanged.
+- The user can still save or cancel the edit after reconnect.
+
+---
+
+### TC-WS-RECONNECT-008 — History preview is preserved during reconnect
+
+**Type:** UI Manual
+**Priority:** Medium
+
+**Preconditions:**
+- The user has the History panel open for an Area and has selected a historical version (the dashed preview polygon is visible on the map).
+- Network is then set to Offline; the reconnecting banner appears.
+
+**Steps:**
+1. Open the History panel for an Area. Click a historical version to show the preview.
+2. Set network to Offline. Wait for the banner to appear.
+3. Restore network. Wait for reconnect.
+4. Observe the History panel and the preview polygon.
+
+**Expected Result:**
+- The History panel is still open and the historical version is still selected.
+- The dashed preview polygon is still visible on the map after reconnect.
+
+---
+
+### TC-WS-RECONNECT-009 — REST area mutations work normally while WebSocket is disconnected
+
+**Type:** UI Manual
+**Priority:** Critical
+
+**Preconditions:**
+- Network is Offline; the reconnecting banner is visible.
+
+**Steps:**
+1. While the banner is visible (WebSocket disconnected), draw and save a new Area using the REST-backed save flow.
+2. Observe the result.
+
+**Expected Result:**
+- The Area is saved successfully (HTTP 201 returned, polygon appears on map).
+- The REST API operates independently of WebSocket state.
+- The user is not blocked from saving while the WebSocket is reconnecting.
+
+---
+
+### TC-WS-RECONNECT-010 — Expired JWT stops the reconnect loop
+
+**Type:** UI Manual
+**Priority:** High
+
+**Preconditions:**
+- The user is authenticated. For this test, use a short-lived token (obtainable by setting `app.auth.jwt-expiration: PT10S` in `application-dev.yml` and restarting the backend, then logging in).
+
+**Steps:**
+1. Log in to obtain a short-lived JWT.
+2. Wait for the JWT to expire.
+3. Set network to Offline, then restore it to trigger a STOMP reconnect attempt with the expired token.
+4. Observe the browser.
+
+**Expected Result:**
+- The STOMP reconnect attempt is rejected (the backend's `JwtChannelInterceptor` rejects the expired token).
+- The 401 REST interceptor clears the stored token and navigates the browser to `/auth` (the login page).
+- The reconnect loop stops — no repeated connection attempts after the token is cleared.
+- The user sees the login page.
+
+---
+
+### TC-WS-RECONNECT-011 — No spurious reconnecting banner on intentional logout
+
+**Type:** UI Manual
+**Priority:** Medium
+
+**Preconditions:**
+- User is logged in and the WebSocket is connected (no banner visible).
+
+**Steps:**
+1. Click "Sign out".
+2. Observe the UI during and after logout.
+
+**Expected Result:**
+- The "Reconnecting realtime updates…" banner does NOT appear at any point during logout.
+- The user is navigated to the `/auth` (login) page.
+- No WebSocket reconnect attempts occur after logout.
+
+---
+
+### TC-WS-RECONNECT-012 — Multiple disconnect-reconnect cycles remain stable
+
+**Type:** UI Manual
+**Priority:** Medium
+
+**Preconditions:**
+- Application is open and map is loaded. WebSocket is connected (no banner visible).
+
+**Steps:**
+1. Set network to Offline. Wait for the banner to appear.
+2. Restore network. Wait for banner to disappear (reconnect complete).
+3. Repeat steps 1–2 three more times (four cycles total).
+4. After the final reconnect, create a new Area and observe.
+
+**Expected Result:**
+- After each cycle: banner appears on disconnect, disappears on reconnect.
+- After the fourth reconnect: the application is fully functional.
+- Creating a new Area in step 4 succeeds and the Area appears on the map.
+- No errors appear in the browser console across all cycles.
 
 ---
 

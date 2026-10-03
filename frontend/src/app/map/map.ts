@@ -65,6 +65,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
   private previewItems!: L.FeatureGroup;
 
   activeBaseMap: 'map' | 'satellite' = 'map';
+  wsStatus: 'connected' | 'reconnecting' = 'connected';
 
   isDrawing = false;
   liveDrawArea: number | null = null;
@@ -427,6 +428,10 @@ export class MapComponent implements AfterViewInit, OnDestroy {
       environment.workspaceId,
       (event) => this.handleRealtimeEvent(event),
       () => this.loadViewport(),
+      (status) => {
+        this.wsStatus = status;
+        this.cdr.detectChanges();
+      },
     );
   }
 

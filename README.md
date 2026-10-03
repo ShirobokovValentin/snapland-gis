@@ -25,6 +25,7 @@ This repository is a take-home assignment implementing a simplified, prototype-g
 | Per-user drawing action rate limiting | Implemented — 50 mutations/minute/user; fixed-window in-process limiter |
 | Area mutation audit trail | Implemented — AreaVersion records actor, action, timestamp, and resulting state for every committed mutation |
 | Custom Micrometer metrics + Prometheus endpoint | Implemented — committed mutation counters (by change type), version conflict counter, rate limit rejection counter, active WebSocket session gauge; exposed at `/actuator/prometheus` |
+| WebSocket graceful degradation and reconnect | Implemented — auto-reconnect with JWT refresh on every attempt; viewport reconciliation via REST after reconnect; "Reconnecting" status banner |
 | Workspace membership authorization | Not implemented — known limitation |
 | Password-based authentication | Not implemented — prototype only |
 | GovMap integration | Not implemented — see [Map Providers](#map-providers) |
@@ -156,6 +157,8 @@ Example payload:
 ```
 
 Events are broadcast only after the database transaction commits. If the transaction rolls back (OCC conflict, invalid geometry), no event is published.
+
+**Reconnect and reconciliation**: The `@stomp/stompjs` client reconnects automatically after a connection loss (3 s delay). Before every connection attempt, the `beforeConnect` hook reads a fresh JWT from `AuthService` — ensuring reconnects always use the live token. If the token has been cleared (expired JWT, logout), the reconnect loop is stopped immediately. On reconnect, the frontend reloads all Areas for the current viewport via REST, recovering any changes missed during disconnection. A "Reconnecting realtime updates…" banner is shown at the bottom of the map while the connection is down, and disappears once the connection is restored. REST area mutations remain fully functional while the WebSocket is disconnected.
 
 **Current limitation**: The in-process Spring `SimpleBroker` broadcasts only to subscribers connected to the same JVM instance. Multi-instance scaling requires Redis Pub/Sub fan-out, which is modelled in the design but not yet implemented.
 
@@ -481,7 +484,6 @@ snapland-gis/
 
 Items designed but not yet implemented:
 
-- WebSocket graceful degradation and reconnect (detect disconnect, reconnect, re-authenticate STOMP, re-subscribe, reload viewport, converge state)
 - Redis Pub/Sub fan-out for horizontal WebSocket scaling
 - Workspace membership authorization
 - Password-based (or OAuth2-backed) authentication

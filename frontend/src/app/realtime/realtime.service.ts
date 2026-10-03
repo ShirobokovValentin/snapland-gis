@@ -14,23 +14,47 @@ export class RealtimeService {
     workspaceId: string,
     onEvent: (event: AreaEventMessage) => void,
     onReconnect: () => void,
+    onStatusChange: (status: 'connected' | 'reconnecting') => void,
   ): void {
     let firstConnect = true;
     this.client = new Client({
       brokerURL: environment.wsUrl,
       reconnectDelay: 3000,
-      connectHeaders: {
-        Authorization: `Bearer ${this.authService.getToken()}`,
+      beforeConnect: () => {
+        const token = this.authService.getToken();
+        if (!token) {
+          // Token was cleared (e.g. by the REST 401 interceptor after the JWT
+          // expired, or by logout). Defer deactivation so we do not call
+          // deactivate() synchronously inside the beforeConnect callback.
+          setTimeout(() => this.client?.deactivate(), 0);
+          return;
+        }
+        // Refresh connectHeaders with the current token before every
+        // connection attempt so reconnects always use the live JWT.
+        this.client!.connectHeaders = { Authorization: `Bearer ${token}` };
       },
       onConnect: () => {
         this.client!.subscribe(`/topic/workspace/${workspaceId}`, (message) => {
           const event: AreaEventMessage = JSON.parse(message.body);
           onEvent(event);
         });
+        onStatusChange('connected');
         if (!firstConnect) {
           onReconnect();
         }
         firstConnect = false;
+      },
+      onWebSocketClose: () => {
+        // Only signal reconnecting if the client is still active.
+        // When disconnect() is called intentionally, this.client is set to
+        // null before the WebSocket close event fires, so the guard below
+        // prevents a spurious 'reconnecting' status update.
+        if (this.client !== null) {
+          onStatusChange('reconnecting');
+        }
+      },
+      onStompError: (frame) => {
+        console.error('STOMP protocol error', frame.headers['message'], frame.body);
       },
     });
     this.client.activate();

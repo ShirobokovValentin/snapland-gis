@@ -6,6 +6,110 @@ This repository is a take-home assignment implementing a simplified, prototype-g
 
 ---
 
+## Installation
+
+Two startup modes are supported from the same `docker-compose.yml`.
+
+---
+
+### Mode 1 — Quick Start (Full Docker)
+
+**Prerequisites:** Docker + Docker Compose. No Java, Node, or local database required.
+
+```bash
+docker compose up --build
+```
+
+This builds and starts all four services: `postgres`, `redis`, `backend`, `frontend`.
+
+Open **http://localhost:4201** in a browser.
+
+**Shutdown:**
+
+```bash
+docker compose down
+```
+
+**Full clean reset** (⚠ deletes the local PostgreSQL data volume):
+
+```bash
+docker compose down -v
+```
+
+The first build downloads Maven, all Java dependencies, and all npm packages — expect several minutes. Subsequent builds use Docker layer cache and are faster unless `pom.xml` or `package-lock.json` change.
+
+> **Note:** Tests are not run during the Docker image build (`-DskipTests`). Run the test suite separately with `./mvnw test` as described in the [Testing](#testing) section.
+
+---
+
+### Mode 2 — Active Development (Infrastructure Only)
+
+**Prerequisites:** Docker + Docker Compose, Java 21, Node.js ≥ 20.19.0.
+
+This mode is recommended during development because it preserves IDE debugging, backend restart speed, and Angular hot reload.
+
+**Step 1 — Start infrastructure:**
+
+```bash
+docker compose up -d postgres redis
+```
+
+This starts only `postgres` and `redis`. The `backend` and `frontend` services are not started.
+
+Wait until postgres is healthy:
+
+```bash
+docker compose ps
+```
+
+The `postgres` container must reach `(healthy)` before the backend can connect. Redis starts alongside postgres but is not yet wired to the application.
+
+**Step 2 — Start the backend:**
+
+The `dev` Spring profile supplies all required secrets. No environment variables are required.
+
+```bash
+cd backend
+./mvnw spring-boot:run -Dspring-boot.run.profiles=dev
+```
+
+The backend starts at **http://localhost:8081**.
+
+Health check:
+
+```bash
+curl http://localhost:8081/actuator/health
+```
+
+Expected response: `{"status":"UP",...}`
+
+**Step 3 — Start the frontend:**
+
+```bash
+cd frontend
+npm install          # first run, or after dependency changes
+npm start            # Angular dev server at http://localhost:4201
+```
+
+Open **http://localhost:4201** in a browser.
+
+The dev server proxies `/api/*` requests to `http://localhost:8081`. WebSocket connects directly to `ws://localhost:8081/ws`.
+
+---
+
+### Authentication and workspace flow
+
+1. Open http://localhost:4201 — the auth guard redirects unauthenticated users to `/auth`.
+2. Enter any email address and a display name to register.
+3. To log in as an existing user, enter the same email on the login screen.
+4. A JWT is stored in `sessionStorage` (per-tab) and attached to all subsequent requests.
+5. After login, the app redirects to `/workspaces`. On a fresh database the workspace list is empty — create a workspace to start.
+6. Selecting a workspace opens the map at `/workspaces/:workspaceId/map`.
+
+Opening the same workspace in a second browser tab or window shows real-time presence for both sessions.
+
+---
+
 ## Features
 
 | Feature | Status |
@@ -292,110 +396,6 @@ All endpoints require a valid JWT in the `Authorization: Bearer <token>` header,
 |--------|------|-------------|
 | `GET` | `/actuator/health` | Liveness / readiness |
 | `GET` | `/actuator/prometheus` | Prometheus metrics scrape endpoint |
-
----
-
-## Running Locally
-
-Two startup modes are supported from the same `docker-compose.yml`.
-
----
-
-### Mode 1 — Quick Start (Full Docker)
-
-**Prerequisites:** Docker + Docker Compose. No Java, Node, or local database required.
-
-```bash
-docker compose up --build
-```
-
-This builds and starts all four services: `postgres`, `redis`, `backend`, `frontend`.
-
-Open **http://localhost:4201** in a browser.
-
-**Shutdown:**
-
-```bash
-docker compose down
-```
-
-**Full clean reset** (⚠ deletes the local PostgreSQL data volume):
-
-```bash
-docker compose down -v
-```
-
-The first build downloads Maven, all Java dependencies, and all npm packages — expect several minutes. Subsequent builds use Docker layer cache and are faster unless `pom.xml` or `package-lock.json` change.
-
-> **Note:** Tests are not run during the Docker image build (`-DskipTests`). Run the test suite separately with `./mvnw test` as described in the [Testing](#testing) section.
-
----
-
-### Mode 2 — Active Development (Infrastructure Only)
-
-**Prerequisites:** Docker + Docker Compose, Java 21, Node.js ≥ 20.19.0.
-
-This mode is recommended during development because it preserves IDE debugging, backend restart speed, and Angular hot reload.
-
-**Step 1 — Start infrastructure:**
-
-```bash
-docker compose up -d postgres redis
-```
-
-This starts only `postgres` and `redis`. The `backend` and `frontend` services are not started.
-
-Wait until postgres is healthy:
-
-```bash
-docker compose ps
-```
-
-The `postgres` container must reach `(healthy)` before the backend can connect. Redis starts alongside postgres but is not yet wired to the application.
-
-**Step 2 — Start the backend:**
-
-The `dev` Spring profile supplies all required secrets. No environment variables are required.
-
-```bash
-cd backend
-./mvnw spring-boot:run -Dspring-boot.run.profiles=dev
-```
-
-The backend starts at **http://localhost:8081**.
-
-Health check:
-
-```bash
-curl http://localhost:8081/actuator/health
-```
-
-Expected response: `{"status":"UP",...}`
-
-**Step 3 — Start the frontend:**
-
-```bash
-cd frontend
-npm install          # first run, or after dependency changes
-npm start            # Angular dev server at http://localhost:4201
-```
-
-Open **http://localhost:4201** in a browser.
-
-The dev server proxies `/api/*` requests to `http://localhost:8081`. WebSocket connects directly to `ws://localhost:8081/ws`.
-
----
-
-### Authentication and workspace flow
-
-1. Open http://localhost:4201 — the auth guard redirects unauthenticated users to `/auth`.
-2. Enter any email address and a display name to register.
-3. To log in as an existing user, enter the same email on the login screen.
-4. A JWT is stored in `sessionStorage` (per-tab) and attached to all subsequent requests.
-5. After login, the app redirects to `/workspaces`. On a fresh database the workspace list is empty — create a workspace to start.
-6. Selecting a workspace opens the map at `/workspaces/:workspaceId/map`.
-
-Opening the same workspace in a second browser tab or window shows real-time presence for both sessions.
 
 ---
 

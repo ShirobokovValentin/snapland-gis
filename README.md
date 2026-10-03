@@ -163,7 +163,7 @@ Example payload:
 
 Events are broadcast only after the database transaction commits. If the transaction rolls back (OCC conflict, invalid geometry), no event is published.
 
-**Reconnect and reconciliation**: The `@stomp/stompjs` client reconnects automatically after a connection loss (3 s delay). Before every connection attempt, the `beforeConnect` hook reads a fresh JWT from `AuthService` — ensuring reconnects always use the live token. If the token has been cleared (expired JWT, logout), the reconnect loop is stopped immediately. On reconnect, the frontend reloads all Areas for the current viewport via REST, recovering any changes missed during disconnection. A "Reconnecting realtime updates…" banner is shown at the bottom of the map while the connection is down, and disappears once the connection is restored. REST area mutations remain fully functional while the WebSocket is disconnected.
+**Reconnect and reconciliation**: The `@stomp/stompjs` client reconnects automatically after a connection loss (3 s delay). Before every connection attempt, the `beforeConnect` hook reads a fresh JWT from `AuthService` — ensuring reconnects always use the live token. If the token has been cleared (expired JWT, logout), the reconnect loop is stopped immediately. On reconnect, the frontend reloads all Areas for the current viewport via REST, recovering any changes missed during disconnection. A "Reconnecting realtime updates…" banner is shown at the bottom of the map while the connection is down, and disappears once the connection is restored. REST area mutations remain fully functional while the WebSocket is disconnected. Connection loss is also detected immediately via the browser's `offline` DOM event, so the status banner appears without waiting for a heartbeat timeout. STOMP heartbeats (5 s interval) are configured on both client and server so that silent drops (NAT timeout, VPN disconnect) are detected within ~7–8 s; the server fires `SessionDisconnectEvent`, which triggers presence cleanup and a `PRESENCE_LEFT` broadcast to other connected clients.
 
 **Current limitation**: The in-process Spring `SimpleBroker` broadcasts only to subscribers connected to the same JVM instance. Multi-instance scaling requires Redis Pub/Sub fan-out, which is modelled in the design but not yet implemented.
 
@@ -173,7 +173,7 @@ When a user establishes a STOMP connection, `PresenceService` broadcasts a `PRES
 
 On (re)connect, the frontend calls `GET /workspaces/{workspaceId}/presence` to retrieve the current snapshot. Events received while the snapshot request is in flight are buffered and replayed after the snapshot is applied, preventing race-condition gaps.
 
-The presence panel in the lower-left corner of the map shows all currently active users. Presence state is ephemeral (cleared on server restart) and intentionally not persisted to the database.
+The presence panel in the top-right corner of the map shows all currently active users; the current user is highlighted. Presence state is ephemeral (cleared on server restart) and intentionally not persisted to the database.
 
 ---
 
@@ -333,7 +333,7 @@ The dev server proxies `/api/*` requests to `http://localhost:8081`. WebSocket c
 1. Open http://localhost:4201 — the auth guard redirects unauthenticated users to `/auth`.
 2. Enter any email address and a display name to register.
 3. To log in as an existing user, enter the same email on the login screen.
-4. A JWT is stored in `localStorage` and attached to all subsequent requests.
+4. A JWT is stored in `sessionStorage` (per-tab) and attached to all subsequent requests.
 5. After login, the app redirects to `/workspaces` where you can create a workspace or open an existing one.
 6. Selecting a workspace opens the map at `/workspaces/:workspaceId/map`.
 

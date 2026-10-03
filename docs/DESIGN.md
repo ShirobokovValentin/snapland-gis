@@ -1795,6 +1795,10 @@ The frontend `RealtimeService` uses `@stomp/stompjs` with automatic reconnect (3
 
 **Intentional-disconnect guard:** `disconnect()` sets `this.client = null` synchronously before calling `deactivate()`. The `onWebSocketClose` callback checks `this.client !== null` before calling `onStatusChange('reconnecting')`, preventing a spurious "Reconnecting" banner after deliberate logout or component destroy.
 
+**Offline event detection:** `RealtimeService` registers a `window.offline` listener on connect and removes it on disconnect. When the browser reports network loss — including DevTools Offline mode, where the existing TCP connection is kept open but traffic is blocked — `onStatusChange('reconnecting')` is called immediately, so the status banner appears without waiting for a heartbeat timeout.
+
+**Heartbeat configuration:** STOMP heartbeats are set to 5 000 ms on both client (`heartbeatIncoming: 5000, heartbeatOutgoing: 5000`) and server (`SimpleBrokerRegistration.setHeartbeatValue([5000, 5000])` backed by a `ThreadPoolTaskScheduler`). For silent connection drops where no `offline` event fires (NAT timeout, VPN disconnect, intermediate packet loss), the server detects the missed client heartbeat within ~7–8 s and fires `SessionDisconnectEvent`, which triggers `PresenceService.onSessionDisconnect` and a `PRESENCE_LEFT` broadcast to remaining clients.
+
 #### Active Users / Presence
 
 **Semantics:** A user is "active" while they have at least one live STOMP session. Multiple browser tabs or devices for the same user collapse to a single presence entry (userId → `Set<sessionId>`).
@@ -1810,6 +1814,8 @@ Both events are delivered on the per-workspace presence topic: `/topic/workspace
 **Snapshot REST endpoint:** `GET /workspaces/{workspaceId}/presence` returns the current active-user list as `[{id, name}]`. Returns `404 WORKSPACE_NOT_FOUND` for unknown workspace IDs (same contract as area endpoints). Requires authentication.
 
 **Race-safe snapshot on the frontend:** On (re)connect, the frontend calls `loadPresence()`, setting `presenceLoading = true` and buffering incoming presence events. When the snapshot response arrives, state is replaced by the snapshot, the buffer is replayed in order, and `presenceLoading = false`. JavaScript's single-threaded event loop ensures the buffer is consistent with respect to event ordering.
+
+**Disconnect detection:** `PresenceService` reacts to `SessionDisconnectEvent`. This event is published by Spring's `SimpleBrokerMessageHandler` both for explicit STOMP DISCONNECT frames and for sessions whose heartbeat has timed out. With a 5 s heartbeat, silent disconnects (no TCP RST/FIN) are detected within ~7–8 s of the client going offline.
 
 **Single-instance limitation:** Presence state is held in-process in `PresenceService`. Users connected to different backend instances will not see each other. Multi-instance presence requires a shared store (e.g., Redis sorted sets or hash maps keyed by userId) and cross-instance event delivery via Redis Pub/Sub. This evolution is described in the design but deferred.
 

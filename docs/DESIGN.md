@@ -1632,20 +1632,56 @@ Workspace identifier.
 WebSocket connections use heartbeat/timeout handling to detect
 disconnected clients and remove stale Presence state.
 
-### Audit Logging
+### Audit Trail
 
-Security- and business-relevant operations are recorded for
-auditability.
+AreaVersion is the persistent audit trail for Area Mutations. It combines
+two responsibilities in a single append-only record:
 
-AreaVersion provides audit information for Area Mutations:
+1. **Version history** — the immutable state of an Area at a specific version,
+   used for point-in-time inspection and restore operations.
 
--   who --- created_by;
--   what --- change_type;
--   when --- created_at;
--   resulting state --- status and versioned Area data.
+2. **Area mutation audit** — a durable, transactionally consistent record of
+   every committed change to an Area.
 
-Additional audit records may be used for operations not represented by
-AreaVersion. Application Logging
+For each committed Area Mutation, AreaVersion answers:
+
+| Audit question | Column |
+|---|---|
+| who | `created_by` (FK → users) — the authenticated user who performed the action |
+| what | `change_type` (CREATED / UPDATED / DELETED / RESTORED) and `area_id` |
+| when | `created_at` (TIMESTAMPTZ) |
+| what resulted | `version`, `status`, `name`, `geometry`, `area_km2` — the complete Area state after the mutation |
+| which workspace | `area_id → area.workspace_id` (one JOIN) |
+
+The workspace context for an AreaVersion is always derivable via
+`area_version.area_id → area.workspace_id`.
+
+**No dedicated `audit_log` table exists.** Introducing one would duplicate
+every Area mutation fact already committed atomically in AreaVersion — it
+would add one extra write per mutation without capturing any new information.
+
+**Failed and rejected operations produce no AreaVersion record.** Requests
+rejected by rate limiting (429), OCC conflict (409), geometry validation (400),
+or any other error result in either no transaction or a rolled-back transaction.
+Because AreaVersion is written within the same database transaction as the Area
+mutation, a rollback removes both. The audit trail therefore contains only
+committed successful mutations.
+
+**Non-Area operations are not persisted in an audit trail.** Authentication
+events (registration, login) and read operations (viewport queries, history
+retrieval) do not create AreaVersion records and have no dedicated persistent
+audit table. User registration is implicitly recorded by the `users` row
+(`users.created_at`). Login has no persistent trace in the current prototype.
+
+**Three concerns are deliberately separated:**
+
+| Concern | Mechanism |
+|---|---|
+| Version history + Area mutation audit | AreaVersion (PostgreSQL, transactional) |
+| Request-level tracing and error recording | Application logs (SLF4J, structured, includes `traceId`) |
+| Operational counters, latency, health | Metrics — see Metrics section (planned Task 16) |
+
+### Application Logging
 
 Services produce structured application logs.
 
@@ -1663,7 +1699,7 @@ Logs include:
 Authentication tokens, credentials, and other sensitive information must
 not be written to application logs.
 
-Metrics
+### Metrics
 
 The system exposes metrics for REST, GIS, Realtime, and infrastructure
 operations.

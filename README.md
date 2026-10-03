@@ -23,6 +23,7 @@ This repository is a take-home assignment implementing a simplified, prototype-g
 | Map / satellite layer switching (OSM ↔ satellite) | Implemented |
 | Satellite tile layer | Implemented — Esri World Imagery (temporary; see [Map Providers](#map-providers)) |
 | Per-user drawing action rate limiting | Implemented — 50 mutations/minute/user; fixed-window in-process limiter |
+| Area mutation audit trail | Implemented — AreaVersion records actor, action, timestamp, and resulting state for every committed mutation |
 | Workspace membership authorization | Not implemented — known limitation |
 | Password-based authentication | Not implemented — prototype only |
 | GovMap integration | Not implemented — see [Map Providers](#map-providers) |
@@ -336,10 +337,11 @@ cd backend
 | `AreaWebSocketAuthIntegrationTest` | WebSocket JWT acceptance and rejection (expired, wrong key, missing) |
 | `AuthIntegrationTest` | Registration, login, duplicate detection, JWT claims, workspace membership |
 | `DrawingRateLimitIntegrationTest` | Per-user quota enforcement, 429 response contract, independent quotas, window reset, no DB write on reject, failed mutations count |
+| `AreaAuditIntegrationTest` | AreaVersion audit trail: exact actor per mutation type, changeType, version, timestamp; failed mutation creates no committed version |
 | `SchemaIntegrationTest` | Database schema constraints and PostGIS spatial queries |
 | `SnaplandGisApplicationTests` | Spring context loads |
 
-**103 integration tests, 0 failures** (verified by `./mvnw test`). Frontend tests: not implemented.
+**108 integration tests, 0 failures** (verified by `./mvnw test`). Frontend tests: not implemented.
 
 ---
 
@@ -378,6 +380,7 @@ A partial GiST spatial index covers `area.geometry WHERE status = 'ACTIVE'`. Thi
 | WebSocket authentication | `JwtChannelInterceptor` validates the JWT in the STOMP `CONNECT` frame |
 | Input validation | Bean Validation on all request DTOs; polygon validity enforced via JTS before persistence |
 | Drawing action rate limiting | Fixed-window per-user limiter (50/min default); enforced as a Spring MVC interceptor; returns `429` with `Retry-After` header |
+| Area mutation audit trail | Every committed Area mutation (create/update/delete/restore) writes an immutable AreaVersion row recording the authenticated actor (`created_by`), action (`change_type`), timestamp (`created_at`), and full resulting Area state |
 | 401 handling | Angular interceptor clears the stored token and redirects to `/auth` on any 401 response |
 
 **Known gap**: Workspace membership is not enforced in `AreaService`. Any authenticated user can read or mutate areas in any workspace. This is documented in `docs/DESIGN.md` as a known limitation of the prototype.
@@ -399,6 +402,7 @@ These are deliberate prototype constraints, not defects.
 | No frontend tests | Angular components have no unit or e2e tests |
 | GovMap not integrated | Esri World Imagery used as a temporary tile source |
 | In-process rate limiter only | Drawing action rate limit is single-JVM and resets on restart; not effective across multiple instances |
+| Audit trail covers Area mutations only | Non-Area activity (login, read requests) has no dedicated persistent audit trail. User registration is implicitly recorded by `users.created_at`. Login has no persistent trace. |
 
 ---
 

@@ -1,0 +1,1611 @@
+We are ready to plan the next task:
+
+Task 14 — Audit & Activity Tracking Gap Analysis
+
+This task must also define the boundary with the future:
+
+Task 16 — Observability / Metrics
+
+Do NOT implement anything yet.
+
+Read first:
+
+- CLAUDE.md
+- README.md
+- docs/REQUIREMENTS.md
+- docs/DESIGN.md
+- docs/TEST_CASES.md
+- all Flyway migrations
+- current Area / AreaVersion entities and repositories
+- current Area create/update/delete/restore flows
+- current authentication/JWT implementation
+- current User / Workspace / WorkspaceMember model
+- current rate limiting implementation
+- current exception handling
+- current transaction boundaries
+- current WebSocket/STOMP implementation
+- current Actuator/Micrometer configuration and dependencies, if any
+
+Also inspect the actual implementation rather than relying only on
+documentation.
+
+# Goal
+
+The assignment requires:
+
+    Log all user actions for audit trail and analytics.
+
+The project already has AreaVersion history, and a future Task 16 will cover
+Observability / Metrics.
+
+Before creating any new audit infrastructure, determine what is actually
+missing.
+
+We must explicitly separate three concerns:
+
+1. Business / version history
+2. Audit / activity trail
+3. Operational analytics / observability
+
+Do NOT assume that a dedicated audit_log table is necessary.
+
+Do NOT implement Task 16 during this task.
+
+---
+
+# 1. Business / Version History
+
+AreaVersion exists to represent immutable historical Area state.
+
+Its purpose is conceptually:
+
+    What did Area X look like at version N?
+
+It may already contain information such as:
+
+    area_id
+    version
+    name
+    geometry
+    change_type
+    created_by
+    created_at
+
+Verify the actual schema.
+
+Determine exactly which audit questions AreaVersion can already answer.
+
+For example:
+
+    Who changed the Area?
+    What Area was changed?
+    What kind of change occurred?
+    When did it occur?
+    What was the resulting Area state?
+    What version resulted from the action?
+    Which workspace did the Area belong to?
+
+Do not duplicate this information into another table without a concrete
+reason.
+
+---
+
+# 2. Audit / Activity Trail
+
+Audit/activity answers:
+
+    Who performed what action and when?
+
+It is persistent application/business history.
+
+Potential examples:
+
+    AREA_CREATED
+    AREA_UPDATED
+    AREA_DELETED
+    AREA_RESTORED
+
+Possibly:
+
+    USER_REGISTERED
+    USER_LOGGED_IN
+
+But do NOT assume all of these require a dedicated audit record.
+
+First inspect REQUIREMENTS.md and DESIGN.md.
+
+Determine what the assignment actually requires and where the wording is
+ambiguous.
+
+Audit/activity is NOT intended to reconstruct Area geometry.
+
+That remains the responsibility of AreaVersion.
+
+---
+
+# 3. Operational Analytics / Observability
+
+Operational analytics answers questions such as:
+
+    How many requests are being processed?
+    How many Area updates occur?
+    How often do version conflicts occur?
+    How many requests are rate-limited?
+    What is REST latency?
+    What is the error rate?
+    How many WebSocket connections exist?
+    How many WebSocket events are published?
+    How is the JVM/database connection pool behaving?
+
+These belong primarily to:
+
+    Micrometer
+    Spring Boot Actuator
+    metrics / monitoring
+
+not necessarily to PostgreSQL audit records.
+
+This is planned for:
+
+    Task 16 — Observability / Metrics
+
+Do NOT create database audit rows merely to implement operational metrics.
+
+Do NOT implement Task 16 now.
+
+---
+
+# Mandatory Classification Matrix
+
+Classify the relevant application events.
+
+Produce a table similar to:
+
+Action / Event              AreaVersion   Audit/Activity   Metric
+-----------------------------------------------------------------
+AREA_CREATED                ?             ?                ?
+AREA_UPDATED                ?             ?                ?
+AREA_DELETED                ?             ?                ?
+AREA_RESTORED               ?             ?                ?
+
+USER_REGISTERED             N/A           ?                ?
+USER_LOGIN                  N/A           ?                ?
+
+GET viewport                N/A           ?                ?
+GET history                 N/A           ?                ?
+
+400 invalid geometry        N/A           ?                ?
+404 area not found          N/A           ?                ?
+409 version conflict        N/A           ?                ?
+429 rate limited            N/A           ?                ?
+500 mutation failure        N/A           ?                ?
+
+REST request count          N/A           N/A              ?
+REST request latency        N/A           N/A              ?
+REST error rate             N/A           N/A              ?
+
+WebSocket CONNECT           N/A           ?                ?
+WebSocket disconnect        N/A           ?                ?
+WebSocket event published   N/A           ?                ?
+
+For each "?" recommend:
+
+    YES
+    NO
+    or OPTIONAL
+
+and explain why.
+
+The classification must be based on the assignment requirements and current
+architecture, not on generic enterprise best practices.
+
+---
+
+# Core Question
+
+After inspecting the current AreaVersion implementation, answer:
+
+    Does AreaVersion already satisfy the audit requirement for Area
+    mutations?
+
+Be precise.
+
+For example, if AreaVersion already records:
+
+    area_id
+    version
+    change_type
+    created_by
+    created_at
+
+and Area provides workspace association, then:
+
+    Alice updated Area 42 at 10:15
+    resulting in version 7
+
+may already be fully reconstructable without audit_log.
+
+If so, explicitly say that.
+
+Do not create:
+
+    audit_log:
+        Alice AREA_UPDATED Area 42 version 7 at 10:15
+
+if this merely duplicates an existing AreaVersion row.
+
+---
+
+# Dedicated audit_log decision
+
+Explicitly evaluate two designs.
+
+## Option A — Reuse AreaVersion as Area mutation audit trail
+
+Conceptually:
+
+    AreaVersion
+        = historical Area state
+        + actor
+        + action/change type
+        + timestamp
+
+Then introduce additional activity storage only for meaningful non-Area
+actions if required.
+
+Advantages/disadvantages must be explained.
+
+## Option B — Dedicated audit_log
+
+Conceptually:
+
+    audit_log
+        actor
+        action
+        entity
+        timestamp
+        context
+
+while AreaVersion remains responsible for Area state history.
+
+Only recommend Option B if it adds clearly different information or behavior.
+
+Do not choose Option B simply because the requirement uses the phrase
+"audit trail".
+
+---
+
+# Registration and Login
+
+Explicitly analyze:
+
+    USER_REGISTERED
+    USER_LOGGED_IN
+
+Questions:
+
+- Does the assignment require these to be persisted?
+- Are they meaningful audit/activity events?
+- Would persistent DB rows add value?
+- Would counters for these events be sufficient for "analytics"?
+- Should successful login be treated as audit, metric, both, or neither?
+
+Remember that the current authentication mechanism is prototype-only:
+
+    register = name + email
+    login = email
+    no email ownership verification
+
+Do not build security-event/SIEM infrastructure.
+
+---
+
+# Read Operations
+
+Analyze whether to persist audit records for:
+
+    GET viewport Areas
+    GET Area history
+
+My preference is NOT to write one DB row per read unless the assignment
+clearly requires it.
+
+Reasons:
+
+- viewport requests may be frequent;
+- it adds significant write amplification;
+- it provides limited value for the assignment;
+- request counts belong naturally to metrics.
+
+But make the decision from the actual requirements.
+
+---
+
+# Failed Operations
+
+Analyze:
+
+    400 INVALID_GEOMETRY
+    404 AREA_NOT_FOUND
+    409 VERSION_CONFLICT
+    429 RATE_LIMIT_EXCEEDED
+    500 failure
+
+Do these belong in persistent audit history?
+
+Or should they be handled through:
+
+    application logs
+    metrics
+    operational monitoring
+
+in Task 16?
+
+My initial preference:
+
+Successful business action
+    -> business/version history and/or audit
+
+Failed request
+    -> metrics/logging
+
+Do not assume this preference is correct if REQUIREMENTS.md says otherwise.
+
+---
+
+# Rate Limiting Interaction
+
+Task 13 now implements:
+
+    50 drawing mutation attempts / minute / authenticated user
+
+429 occurs before:
+
+    controller
+    transaction
+    AreaVersion
+    WebSocket event
+
+Analyze whether a 429 should:
+
+    create persistent audit record
+or
+    increment an operational metric in Task 16
+
+Do NOT modify the rate limiter during Task 14 unless a genuine bug is found.
+
+---
+
+# WebSocket Interaction
+
+Current realtime semantics are:
+
+    REST mutation
+        ↓
+    DB transaction
+        ↓
+    COMMIT
+        ↓
+    AFTER_COMMIT
+        ↓
+    WebSocket event
+
+Analyze whether these should be audit events:
+
+    WebSocket CONNECT
+    WebSocket disconnect
+    SUBSCRIBE
+    MESSAGE delivery
+
+My expectation is that these are operational telemetry rather than business
+audit events.
+
+Do not add persistent WebSocket audit rows without a clear requirement.
+
+Do not change WebSocket behavior in Task 14.
+
+---
+
+# If a dedicated audit table is recommended
+
+Only then design the smallest useful schema.
+
+Possible conceptual fields:
+
+    id
+    actor_user_id
+    workspace_id
+    action
+    entity_id
+    resulting_version
+    occurred_at
+
+But inspect current conventions before proposing exact columns.
+
+Explicitly analyze:
+
+## id
+
+UUID or another project convention?
+
+## actor_user_id
+
+Should it reference users?
+
+Consider future user deletion, but do not solve hypothetical account
+retention problems unless necessary.
+
+## workspace_id
+
+Does it add useful queryability?
+
+## action
+
+Prefer constrained values.
+
+Avoid arbitrary strings if an enum/check constraint fits the project.
+
+## entity_id
+
+If only Area actions are audited, determine whether a generic entity_type is
+actually necessary.
+
+Avoid premature generic abstractions.
+
+## resulting_version
+
+Determine whether linking an audit action to AreaVersion provides meaningful
+value.
+
+## occurred_at
+
+Follow current timestamp conventions.
+
+## metadata
+
+Be skeptical.
+
+Do NOT introduce a generic JSON metadata dumping ground without a concrete
+requirement.
+
+---
+
+# Do not duplicate AreaVersion data
+
+If audit_log is introduced, do NOT store:
+
+- geometry;
+- Area name snapshot;
+- full Area state;
+- previous Area state;
+- new Area state.
+
+Those belong in AreaVersion.
+
+A possible relationship could be:
+
+    AuditLog:
+        Alice updated Area X
+        resulting version = 7
+
+    AreaVersion 7:
+        complete immutable Area state
+
+But only use this design if the dedicated AuditLog is justified.
+
+---
+
+# Transaction semantics
+
+If successful Area actions require additional persistent audit records, they
+must be transactionally consistent.
+
+Desired behavior:
+
+    Area mutation
+        ↓
+    AreaVersion
+        ↓
+    Audit record
+        ↓
+    COMMIT
+        ↓
+    AFTER_COMMIT WebSocket event
+
+Guarantees:
+
+    mutation commits
+        -> audit commits
+
+    mutation rolls back
+        -> audit rolls back
+
+Do NOT use REQUIRES_NEW for business audit records.
+
+Do not asynchronously write critical business audit records.
+
+---
+
+# Audit API / UI
+
+Explicitly decide whether Task 14 needs:
+
+    GET /audit
+    audit UI
+    admin page
+    analytics dashboard
+
+My preference is NO unless the assignment requires access to the audit data
+through an API.
+
+Persistence + integration tests + documentation may be sufficient.
+
+Do not add UI merely to demonstrate the table.
+
+---
+
+# Analytics boundary with Task 16
+
+This is a mandatory section of the report.
+
+For each useful analytics signal, decide whether it belongs in Task 14 or
+Task 16.
+
+At minimum analyze:
+
+    area.created count
+    area.updated count
+    area.deleted count
+    area.restored count
+
+    auth.register count
+    auth.login count
+
+    invalid geometry count
+    version conflict count
+    rate-limit rejection count
+
+    REST request count
+    REST latency
+    REST error rate
+
+    active WebSocket connections
+    WebSocket connection failures
+    WebSocket events published
+
+    DB/HikariCP metrics
+    JVM metrics
+
+Prefer Task 16 for operational counters/latency/system health.
+
+Do not persist one audit row solely because we may someday count it.
+
+---
+
+# Task 16 preliminary scope
+
+Do NOT implement Task 16.
+
+However, based on the investigation, produce a preliminary recommended scope
+for:
+
+    Task 16 — Observability / Metrics
+
+For example, after verifying dependencies:
+
+Built-in:
+    Spring Boot Actuator
+    Micrometer
+
+Potential custom metrics:
+    area.created
+    area.updated
+    area.deleted
+    area.restored
+
+    area.version_conflict
+    area.invalid_geometry
+
+    drawing.rate_limit.rejected
+
+    websocket.connections.active
+    websocket.events.published
+
+Do not finalize names yet unless current project conventions make them
+obvious.
+
+The purpose is to ensure Task 14 does not implement functionality that
+belongs in Task 16.
+
+---
+
+# Data retention
+
+The assignment mentions data retention policy.
+
+Analyze separately:
+
+    AreaVersion retention
+    audit/activity retention
+    metrics retention
+
+Do NOT implement deletion/retention jobs during Task 14.
+
+Document what future retention decisions would be required.
+
+Metrics retention is normally handled by the monitoring backend, not the
+application database.
+
+---
+
+# Performance
+
+Analyze the write amplification of each option.
+
+Example:
+
+Current mutation:
+
+    Area write
+    + AreaVersion insert
+
+Dedicated audit approach:
+
+    Area write
+    + AreaVersion insert
+    + AuditLog insert
+
+Explain whether the additional write provides enough value to justify it.
+
+Do not add Kafka/RabbitMQ/Redis.
+
+---
+
+# Database migration
+
+Only if a new table is genuinely justified:
+
+- add a new Flyway migration;
+- never modify an already applied migration;
+- add only useful indexes;
+- avoid speculative indexes.
+
+Base index recommendations on actual expected queries such as:
+
+    actor + time
+    workspace + time
+    area + time
+
+Do not index every column.
+
+---
+
+# Tests
+
+Do not finalize tests until the architecture decision is made.
+
+If AreaVersion is formally reused as the Area mutation audit trail, propose
+tests proving that it contains the necessary audit information.
+
+For example:
+
+TC-AUDIT-001
+CREATE records actor, action, timestamp and Area/version identity.
+
+TC-AUDIT-002
+UPDATE records correct authenticated actor and resulting version.
+
+TC-AUDIT-003
+DELETE records correct action and actor.
+
+TC-AUDIT-004
+RESTORE records correct action, actor and resulting new version.
+
+TC-AUDIT-005
+Failed mutation does not create committed business audit/history record.
+
+If dedicated AuditLog is introduced, propose corresponding integration
+tests.
+
+If USER_REGISTERED / USER_LOGIN are audited, propose separate focused tests.
+
+Do not disable Spring Security.
+
+---
+
+# Frontend
+
+Prefer NO frontend changes.
+
+Do not add:
+
+- audit page;
+- analytics page;
+- metrics dashboard.
+
+---
+
+# Documentation
+
+README.md is a living project document.
+
+After implementation, Task 14 may affect:
+
+README.md:
+- Features
+- Technical Decisions
+- Security
+- Database / Performance
+- Known Limitations
+- Future Work
+
+DESIGN.md:
+- explicit distinction between:
+      AreaVersion
+      Audit/activity
+      Metrics/observability
+- transaction semantics
+- analytics boundary
+
+TEST_CASES.md:
+- Task 14 cases
+
+If the current README says:
+
+    no dedicated audit log
+
+do NOT automatically remove that limitation merely because AreaVersion is
+designated as an audit trail.
+
+Rewrite it accurately based on the final decision.
+
+For example:
+
+    Area mutations have an immutable actor/action/time history through
+    AreaVersion; broader application activity auditing is not implemented.
+
+Use precise language.
+
+---
+
+# Scope exclusions
+
+Do NOT implement:
+
+- Task 16 metrics;
+- Prometheus/Grafana infrastructure;
+- audit UI;
+- analytics dashboard;
+- generic analytics API;
+- request/response payload logging;
+- geometry duplication;
+- Kafka;
+- RabbitMQ;
+- Redis for audit;
+- asynchronous audit pipeline;
+- SIEM/security event infrastructure;
+- IP/device fingerprinting;
+- retention jobs;
+- workspace authorization;
+- presence/live drawing synchronization;
+- request timeout infrastructure.
+
+---
+
+# Expected pre-implementation report
+
+Produce:
+
+1. Exact requirement wording from REQUIREMENTS.md and DESIGN.md.
+2. Current AreaVersion schema and behavior.
+3. Which audit questions AreaVersion already answers.
+4. Mandatory classification matrix:
+       AreaVersion / Audit-Activity / Metric.
+5. Gap analysis.
+6. Recommended Task 14 scope.
+7. Option A vs Option B comparison:
+       reuse AreaVersion
+       vs dedicated audit_log.
+8. Final recommendation on whether audit_log is necessary.
+9. Registration/login decision.
+10. Read-operation audit decision.
+11. Failed-operation audit decision.
+12. Rate-limit interaction.
+13. WebSocket audit/telemetry decision.
+14. Transaction semantics.
+15. Data model and migration ONLY if needed.
+16. Index strategy ONLY if needed.
+17. Performance/write-amplification analysis.
+18. Audit API/UI decision.
+19. Data-retention implications.
+20. Exact files that would be modified.
+21. Proposed automated tests.
+22. Documentation changes.
+23. Dependencies, if any.
+24. Risks / remaining limitations.
+25. Preliminary Task 16 Observability / Metrics scope.
+26. Implementation sequence for Task 14.
+
+Most importantly, end the report with explicit answers to:
+
+A. What persistent audit information is genuinely missing today?
+
+B. Can AreaVersion satisfy the audit requirement for Area mutations?
+
+C. Is a dedicated audit_log table justified? Why or why not?
+
+D. Which analytics signals should NOT be persisted and should instead be
+   implemented in Task 16?
+
+Do NOT modify any files.
+
+Stop after the report and wait for approval.
+
+
+
+
+
+---
+  Task 14 — Audit & Activity Tracking Gap Analysis
+
+  ---
+  1. Exact Requirement Wording
+
+  REQUIREMENTS.md §1 Additional Backend Challenges:
+
+  ▎ Log all user actions for audit trail and analytics.
+
+  REQUIREMENTS.md §6 Advanced Backend Optimization:
+
+  ▎ Add telemetry and performance metrics collection.
+
+  DESIGN.md §Data Integrity / Auditability:
+
+  ▎ All significant user actions must be recorded in the audit log. The history must make it possible to determine: who / what / when.
+
+  DESIGN.md §Security & Observability — Audit Logging:
+
+  ▎ Security- and business-relevant operations are recorded for auditability.
+  ▎ AreaVersion provides audit information for Area Mutations:
+  ▎ - who — created_by;
+  ▎ - what — change_type;
+  ▎ - when — created_at;
+  ▎ - resulting state — status and versioned Area data.
+  ▎
+  ▎ Additional audit records may be used for operations not represented by AreaVersion.
+
+  DESIGN.md §Glossary:
+
+  ▎ AreaVersion: An immutable snapshot of an Area state at a specific version. Used for history, audit, and restore.
+
+  DESIGN.md §Metrics:
+
+  ▎ REST metrics: request rate; request latency; error rate.
+  ▎ GIS metrics: Viewport Query latency; Area Mutation latency; VERSION_CONFLICT rate.
+  ▎ Realtime metrics: active WebSocket connections; Area Event propagation latency; WebSocket reconnect rate.
+  ▎ Infrastructure metrics: database connection pool utilization; PostgreSQL errors; Redis errors.
+
+  The ambiguity in REQUIREMENTS.md ("all user actions") is resolved by DESIGN.md, which explicitly states that AreaVersion already provides the audit mechanism for Area mutations and that "additional records may be used for operations not represented by AreaVersion." DESIGN.md's phrasing is authoritative architectural intent and overrides the vague REQUIREMENTS phrase.
+
+  ---
+  2. Current AreaVersion Schema and Behavior
+
+  V2__core_schema.sql — area_version table:
+
+  CREATE TABLE area_version (
+      id          UUID                   NOT NULL,  -- PK
+      area_id     UUID                   NOT NULL,  -- FK → area
+      version     INTEGER                NOT NULL,
+      name        VARCHAR(255)           NOT NULL,
+      geometry    geometry(POLYGON, 4326) NOT NULL,
+      area_km2    NUMERIC(20, 6)         NOT NULL,
+      status      VARCHAR(50)            NOT NULL,  -- 'ACTIVE' | 'DELETED'
+      change_type VARCHAR(50)            NOT NULL,  -- 'CREATED' | 'UPDATED' | 'DELETED' | 'RESTORED'
+      created_by  UUID                   NOT NULL,  -- FK → users
+      created_at  TIMESTAMPTZ            NOT NULL,
+      UNIQUE (area_id, version)
+  );
+
+  Java entity (AreaVersion.java): exposes id, area (lazy FK), version, name, geometry, areaKm2, status, changeType, createdBy (lazy FK → User), createdAt.
+
+  AreaVersionResponse DTO (API-visible): id, version, name, geometry, areaKm2, status, changeType, createdBy (UUID), createdAt.
+
+  AreaService behavior (verified in code):
+  - createArea passes createdByUserId and writes ChangeType.CREATED in the same @Transactional method.
+  - updateArea passes updatedByUserId and writes ChangeType.UPDATED transactionally.
+  - deleteArea passes deletedByUserId and writes ChangeType.DELETED transactionally.
+  - restoreArea passes restoredByUserId and writes ChangeType.RESTORED transactionally.
+
+  All four mutation flows: Area write + AreaVersion insert are atomic in a single @Transactional method. @TransactionalEventListener(AFTER_COMMIT) ensures the WebSocket event fires only after commit.
+
+  The workspace association is one join away: area_version.area_id → area.workspace_id. workspace_id is not directly stored on area_version.
+
+  ---
+  3. Audit Questions AreaVersion Already Answers
+
+  ┌───────────────────────────────┬─────────────────────────────────────────────────────────────┬────────────────┐
+  │        Audit question         │                           Answer                            │     Source     │
+  ├───────────────────────────────┼─────────────────────────────────────────────────────────────┼────────────────┤
+  │ Who changed the Area?         │ area_version.created_by FK → users.id                       │ Direct column  │
+  ├───────────────────────────────┼─────────────────────────────────────────────────────────────┼────────────────┤
+  │ What Area was changed?        │ area_version.area_id                                        │ Direct column  │
+  ├───────────────────────────────┼─────────────────────────────────────────────────────────────┼────────────────┤
+  │ What kind of change?          │ area_version.change_type (CREATED/UPDATED/DELETED/RESTORED) │ Direct column  │
+  ├───────────────────────────────┼─────────────────────────────────────────────────────────────┼────────────────┤
+  │ When did it occur?            │ area_version.created_at                                     │ Direct column  │
+  ├───────────────────────────────┼─────────────────────────────────────────────────────────────┼────────────────┤
+  │ What was the resulting state? │ name, geometry, area_km2, status at that version            │ Direct columns │
+  ├───────────────────────────────┼─────────────────────────────────────────────────────────────┼────────────────┤
+  │ What version resulted?        │ area_version.version                                        │ Direct column  │
+  ├───────────────────────────────┼─────────────────────────────────────────────────────────────┼────────────────┤
+  │ Which workspace?              │ area_version.area_id → area.workspace_id                    │ One JOIN       │
+  └───────────────────────────────┴─────────────────────────────────────────────────────────────┴────────────────┘
+
+  Example queries fully supported today:
+
+  - "Alice updated Area 42 at 10:15, resulting in version 7" — reconstructable from area_version where area_id = 42, version = 7, change_type = UPDATED, created_by = alice_id, created_at = 10:15.
+  - "What areas did user X modify this week?" — SELECT * FROM area_version WHERE created_by = ? AND created_at > ?.
+  - "Show the full history of Area 42 ordered newest first" — SELECT * FROM area_version WHERE area_id = 42 ORDER BY version DESC.
+  - "What was the Area geometry before Bob deleted it?" — the DELETED version row contains the snapshot.
+
+  All canonical audit questions for Area mutations are fully answerable from the current schema without additional tables.
+
+  ---
+  4. Classification Matrix
+
+  ┌───────────────────────────┬───────────────────┬───────────────────────────────────────────────────────────────┬───────────────┐
+  │      Action / Event       │    AreaVersion    │                        Audit/Activity                         │    Metric     │
+  ├───────────────────────────┼───────────────────┼───────────────────────────────────────────────────────────────┼───────────────┤
+  │ AREA_CREATED              │ YES — full record │ NO — duplicates AreaVersion                                   │ YES (Task 16) │
+  ├───────────────────────────┼───────────────────┼───────────────────────────────────────────────────────────────┼───────────────┤
+  │ AREA_UPDATED              │ YES — full record │ NO — duplicates AreaVersion                                   │ YES (Task 16) │
+  ├───────────────────────────┼───────────────────┼───────────────────────────────────────────────────────────────┼───────────────┤
+  │ AREA_DELETED              │ YES — full record │ NO — duplicates AreaVersion                                   │ YES (Task 16) │
+  ├───────────────────────────┼───────────────────┼───────────────────────────────────────────────────────────────┼───────────────┤
+  │ AREA_RESTORED             │ YES — full record │ NO — duplicates AreaVersion                                   │ YES (Task 16) │
+  ├───────────────────────────┼───────────────────┼───────────────────────────────────────────────────────────────┼───────────────┤
+  │ USER_REGISTERED           │ N/A               │ NO — implicit in users.created_at                             │ YES (Task 16) │
+  ├───────────────────────────┼───────────────────┼───────────────────────────────────────────────────────────────┼───────────────┤
+  │ USER_LOGIN                │ N/A               │ NO — no state change, prototype auth                          │ YES (Task 16) │
+  ├───────────────────────────┼───────────────────┼───────────────────────────────────────────────────────────────┼───────────────┤
+  │ GET viewport              │ N/A               │ NO — read, not a business action                              │ YES (Task 16) │
+  ├───────────────────────────┼───────────────────┼───────────────────────────────────────────────────────────────┼───────────────┤
+  │ GET area history          │ N/A               │ NO — read, not a business action                              │ YES (Task 16) │
+  ├───────────────────────────┼───────────────────┼───────────────────────────────────────────────────────────────┼───────────────┤
+  │ 400 INVALID_GEOMETRY      │ N/A               │ NO — failed pre-validation, no commit                         │ YES (Task 16) │
+  ├───────────────────────────┼───────────────────┼───────────────────────────────────────────────────────────────┼───────────────┤
+  │ 404 AREA_NOT_FOUND        │ N/A               │ NO — client error                                             │ YES (Task 16) │
+  ├───────────────────────────┼───────────────────┼───────────────────────────────────────────────────────────────┼───────────────┤
+  │ 409 VERSION_CONFLICT      │ N/A               │ NO — OCC rejection, no commit                                 │ YES (Task 16) │
+  ├───────────────────────────┼───────────────────┼───────────────────────────────────────────────────────────────┼───────────────┤
+  │ 429 RATE_LIMIT_EXCEEDED   │ N/A               │ NO — pre-transaction, no commit                               │ YES (Task 16) │
+  ├───────────────────────────┼───────────────────┼───────────────────────────────────────────────────────────────┼───────────────┤
+  │ 500 mutation failure      │ N/A               │ NO — internal error, rollback                                 │ YES (Task 16) │
+  ├───────────────────────────┼───────────────────┼───────────────────────────────────────────────────────────────┼───────────────┤
+  │ REST request count        │ N/A               │ N/A                                                           │ YES (Task 16) │
+  ├───────────────────────────┼───────────────────┼───────────────────────────────────────────────────────────────┼───────────────┤
+  │ REST request latency      │ N/A               │ N/A                                                           │ YES (Task 16) │
+  ├───────────────────────────┼───────────────────┼───────────────────────────────────────────────────────────────┼───────────────┤
+  │ REST error rate           │ N/A               │ N/A                                                           │ YES (Task 16) │
+  ├───────────────────────────┼───────────────────┼───────────────────────────────────────────────────────────────┼───────────────┤
+  │ WebSocket CONNECT         │ N/A               │ NO — operational telemetry                                    │ YES (Task 16) │
+  ├───────────────────────────┼───────────────────┼───────────────────────────────────────────────────────────────┼───────────────┤
+  │ WebSocket disconnect      │ N/A               │ NO — operational telemetry                                    │ YES (Task 16) │
+  ├───────────────────────────┼───────────────────┼───────────────────────────────────────────────────────────────┼───────────────┤
+  │ WebSocket event published │ N/A               │ NO — consequence of committed mutation already in AreaVersion │ YES (Task 16) │
+  └───────────────────────────┴───────────────────┴───────────────────────────────────────────────────────────────┴───────────────┘
+
+  Rationale for Audit/Activity NO classifications:
+  - Area mutations: DESIGN.md explicitly delegates to AreaVersion.
+  - Read operations: High frequency, no state change, write amplification unwarranted.
+  - Failed operations: Never commit; they belong in application logs and metrics.
+  - USER_LOGIN: Prototype email-only auth. No session object, no security event of consequence.
+  - USER_REGISTERED: The users row with created_at already provides the essential facts (who, when). There is no separate action to record that isn't captured by the user row itself.
+  - WebSocket events: These are delivery channels for Area events, not independent business actions.
+
+  ---
+  5. Gap Analysis
+
+  Genuine information gaps today:
+
+  ┌────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┬─────────────────────────────────────────────────┐
+  │                                                                        Gap                                                                         │                  Significance                   │
+  ├────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────┤
+  │ created_by in AreaVersion is populated but existing tests assert isNotNull() only — no test asserts the value equals the authenticated user's UUID │ Test coverage gap, not a schema gap             │
+  ├────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────┤
+  │ USER_REGISTERED has no explicit "action = REGISTERED" record                                                                                       │ Minimal: users.created_at implicitly records it │
+  ├────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────┤
+  │ USER_LOGIN has no persistent record                                                                                                                │ Acceptable for prototype email-only auth        │
+  ├────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────┤
+  │ No operational metrics                                                                                                                             │ Task 16 scope                                   │
+  └────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┴─────────────────────────────────────────────────┘
+
+  What is NOT a gap:
+  - There is no missing schema for Area mutation audit. AreaVersion already captures who/what/when/resulting-state transactionally.
+  - workspace_id not being on area_version directly is not a gap — it is one deterministic JOIN.
+
+  ---
+  6. Recommended Task 14 Scope
+
+  Minimal and correct:
+
+  1. Formally designate AreaVersion as the audit trail for Area mutations in DESIGN.md (explicit section, not just a note).
+  2. Add integration tests that verify created_by equals the authenticated user UUID for all four mutation types and that a failed mutation produces no committed AreaVersion.
+  3. Update README.md and DESIGN.md to accurately document the audit posture.
+
+  No new tables, no new migrations, no new dependencies.
+
+  ---
+  7. Option A vs Option B
+
+  Option A — Reuse AreaVersion as the Area Mutation Audit Trail
+
+  AreaVersion is already conceptually:
+
+  immutable Area state snapshot
+  + actor (created_by)
+  + action/change type
+  + timestamp
+  + version sequence
+
+  Advantages:
+  - Zero additional writes per mutation.
+  - Transactional consistency is already guaranteed (same @Transactional method).
+  - DESIGN.md explicitly states this intent ("AreaVersion provides audit information for Area Mutations").
+  - The public API already exposes createdBy on every AreaVersionResponse.
+  - No schema changes, no new migration, no new code.
+
+  Disadvantages:
+  - workspace_id requires a JOIN to retrieve.
+  - AreaVersion also carries geometry, name, area_km2 — more data than a pure audit record needs. However, this is already stored; the question is not whether to add it but whether to duplicate it.
+  - Cannot express non-Area events (auth, reads) in the same table without overloading the schema's semantics.
+
+  Option B — Dedicated audit_log Table
+
+  Conceptual schema:
+
+  CREATE TABLE audit_log (
+      id             UUID        PK,
+      actor_user_id  UUID        FK → users,
+      workspace_id   UUID        FK → workspace (nullable),
+      action         VARCHAR(50) CHECK (action IN ('AREA_CREATED', ...)),
+      entity_id      UUID,       -- area_id
+      resulting_version INTEGER, -- for Area mutations
+      occurred_at    TIMESTAMPTZ NOT NULL
+  );
+
+  Advantages:
+  - Single unified query surface for all event types.
+  - workspace_id directly accessible.
+  - Can hold non-Area events (auth, future business events).
+
+  Disadvantages:
+  - Every successful Area mutation now requires three writes: area, area_version, audit_log. No new information is captured — just duplication.
+  - Increases transaction cost by one insert per mutation.
+  - Diverges from DESIGN.md, which explicitly says AreaVersion is the audit mechanism.
+  - Requires a Flyway migration.
+  - The "separate event types" argument is moot: DESIGN.md says "additional records may be used for operations NOT represented by AreaVersion." Area mutations ARE represented by AreaVersion.
+
+  ---
+  8. Final Recommendation on audit_log
+
+  audit_log is not justified.
+
+  DESIGN.md explicitly resolves the question: AreaVersion is the designed audit mechanism for Area mutations. Adding audit_log rows for AREA_CREATED/UPDATED/DELETED/RESTORED would duplicate information already committed atomically in AreaVersion.
+
+  The only case for a dedicated table would be if there were significant non-Area events requiring persistent audit records and a unified query surface. The analysis below (sections 9–13) concludes that no such events exist for this prototype.
+
+  ---
+  9. Registration and Login Decision
+
+  USER_REGISTERED:
+
+  The users table already captures: id, name, email, created_at. From this, you can determine: who registered (name, email), their user UUID, and when. This implicitly records the registration event.
+
+  DESIGN.md's "Additional audit records may be used for operations not represented by AreaVersion" applies here in principle, but for a prototype with email-only auth (no passwords, no email verification), the security significance is minimal. The users row is the registration record.
+
+  Decision: NO dedicated record. The users.created_at is sufficient. A separate audit_log row would add only "action = REGISTERED" and nothing else.
+
+  USER_LOGIN:
+
+  AuthService.login() issues a JWT and returns it. There is no persistent state change: no session row, no last-login timestamp on the users table. Login with email-only auth has no security event value equivalent to credential authentication. The current users table has no last_login_at column and DESIGN.md does not specify one.
+
+  Decision: NO persistent record. This is operational/metric territory (auth.login.count in Task 16). If a last_login_at column were added to users, it would be a byproduct of login but not an audit record per se, and it goes beyond current task scope.
+
+  ---
+  10. Read-Operation Audit Decision
+
+  GET viewport and GET area history are read operations:
+  - No state change occurs.
+  - Viewport queries may fire on every pan/zoom (potentially many per minute per user).
+  - DESIGN.md treats GET history as a plain read flow (Flow #5) with no audit mention.
+  - Write amplification: one DB row per GET would rival the writes from Area mutations and would provide minimal business value.
+
+  Decision: NO persistent audit records for reads. Request count and latency are metrics (Task 16).
+
+  ---
+  11. Failed-Operation Audit Decision
+
+  400 INVALID_GEOMETRY, 404 AREA_NOT_FOUND, 409 VERSION_CONFLICT, 429 RATE_LIMIT_EXCEEDED, 500:
+
+  All of these result in no committed transaction (or in the case of 429, no transaction is even started — the interceptor fires before the controller). Since AreaVersion is the audit trail and requires a committed transaction, failed operations correctly produce no AreaVersion rows, and there is nothing to audit about a non-committed action.
+
+  Current handling:
+  - GlobalExceptionHandler logs a warning for 429 (log.warn).
+  - GlobalExceptionHandler logs an error for 500 (log.error).
+  - 409 produces a structured response with traceId for correlation.
+  - All errors return traceId for log correlation.
+
+  Decision: NO persistent records. Existing application logging (SLF4J) covers traceability. Frequency/rate belongs to metrics (Task 16). Storing a DB row for each client error would be write amplification with no audit value.
+
+  ---
+  12. Rate-Limiting Interaction
+
+  429 is emitted by DrawingRateLimitInterceptor.preHandle(), which executes after Spring Security but before any controller or @Transactional method. The sequence when a 429 occurs is:
+
+  HTTP request
+    → Spring Security (JWT validated)
+    → DrawingRateLimitInterceptor (throws RateLimitExceededException)
+    → GlobalExceptionHandler (logs warn, returns 429)
+    → NO transaction started
+    → NO AreaVersion written
+    → NO WebSocket event published
+
+  A persistent DB row for a 429 rejection would require starting a new transaction specifically to write an audit record for a rejected request — this is counter to the principle that audit records should track committed business events, not abusive or rejected requests.
+
+  Decision: NO persistent record. Task 16 metric: drawing.rate_limit.rejected.count.
+
+  ---
+  13. WebSocket Audit/Telemetry Decision
+
+  CONNECT/SUBSCRIBE: These are transport-layer events. They represent a session being established, not a business action. DESIGN.md describes them as presence/connection management (Flows #7 and #8). No audit record is specified.
+
+  Disconnect: Operational. Already handled by heartbeat/timeout cleanup.
+
+  WebSocket event published: These are published AFTER_COMMIT as a consequence of committed Area mutations. The committed mutation is already in AreaVersion. Publishing the WebSocket event is a delivery detail, not a separate business action.
+
+  Decision: NO persistent records for any WebSocket events. Active connection count and event delivery latency are metrics (Task 16).
+
+  ---
+  14. Transaction Semantics
+
+  Current flow (correct, no changes needed):
+
+  HTTP mutation request
+    → DrawingRateLimitInterceptor (preHandle — quota check)
+    → AreaService.createArea / updateArea / deleteArea / restoreArea
+        → @Transactional BEGIN
+        → Area write (INSERT or UPDATE)
+        → AreaVersion INSERT  ← audit record
+        → COMMIT
+    → @TransactionalEventListener(AFTER_COMMIT)
+        → AreaEventRelay → WebSocket broadcast
+
+  The transactional consistency guarantee is already met:
+  - Area mutation commits → AreaVersion commits (same transaction).
+  - Area mutation rolls back → AreaVersion rolls back (same transaction).
+  - WebSocket event fires only after COMMIT.
+
+  If audit_log were introduced, it would belong in the same transaction (not REQUIRES_NEW, not async). Since we are not introducing it, this section requires no action.
+
+  ---
+  15. Data Model and Migration
+
+  No new table. No new Flyway migration required.
+
+  The only potential optional addition is a last_login_at timestamp on users, but this is not needed for the audit requirement and is out of scope.
+
+  ---
+  16. Index Strategy
+
+  No new indexes required.
+
+  If area_version audit queries by workspace were needed, a workspace_id denormalization plus index would help. But since area_version is accessed through area_id (which is indexed via the UNIQUE constraint) and workspace lookups require at most one JOIN, no additional index is justified for the current query patterns.
+
+  ---
+  17. Performance / Write-Amplification Analysis
+
+  Current per-mutation cost:
+  - 1 area INSERT or UPDATE
+  - 1 area_version INSERT
+  - Total: 2 writes per mutation
+
+  Option A (no change): Write cost remains 2 writes.
+
+  Option B (with audit_log): Write cost becomes 3 writes per mutation — 50% more writes for no new information. At 50 mutations/minute/user (the rate limit ceiling), this adds 50 extra DB writes/minute/user.
+
+  Verdict: Option A is clearly preferable. The audit information is already in area_version.
+
+  ---
+  18. Audit API / UI Decision
+
+  No audit API endpoint. No audit UI.
+
+  The existing GET /workspaces/{wid}/areas/{aid}/versions endpoint already exposes the complete Area mutation audit trail including createdBy, changeType, createdAt. No additional endpoint is needed.
+
+  An admin-facing GET /audit?userId=...&workspaceId=... endpoint would be useful in production but is not required by the assignment. The existing history endpoint serves the assignment's audit requirement.
+
+  ---
+  19. Data-Retention Implications
+
+  AreaVersion: Append-only by design. DESIGN.md §Deletion/Retention mentions soft deletes and a "retention policy" but doesn't specify a concrete policy. AreaVersion records are never deleted in the current implementation. Future retention jobs (e.g., "purge DELETED areas after 90 days" or "compact AreaVersion history") are out of scope for Task 14.
+
+  Users table: Registration records (users rows) persist indefinitely. No retention mechanism exists.
+
+  Rate-limiter state: In-memory, lost on restart. No retention concern.
+
+  Metrics (Task 16): Handled by the monitoring backend (time-series DB, Prometheus, etc.), not by the application database. Application code does not manage metrics retention.
+
+  ---
+  20. Exact Files That Would Be Modified
+
+  ┌──────────────────────────────────────────────────────────────────────┬────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+  │                                 File                                 │                                                               Change                                                               │
+  ├──────────────────────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ docs/DESIGN.md                                                       │ Add explicit "Audit Trail" section under Security & Observability that formally states AreaVersion is the audit trail for Area     │
+  │                                                                      │ mutations, distinguishes the three concerns (version history / audit / metrics), and notes what is NOT persisted                   │
+  ├──────────────────────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ docs/TEST_CASES.md                                                   │ Add TC-AUDIT-001 through TC-AUDIT-005 as a new section                                                                             │
+  ├──────────────────────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ README.md                                                            │ Update Known Limitations (remove or reword "no audit log"), update Features table, update Security section                         │
+  ├──────────────────────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ backend/src/test/java/com/snapland/gis/AreaAuditIntegrationTest.java │ NEW — 5 integration tests asserting audit invariants on AreaVersion                                                                │
+  └──────────────────────────────────────────────────────────────────────┴────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+  No production code changes. No new Flyway migration. No new dependencies.
+
+  ---
+  21. Proposed Automated Tests
+
+  TC-AUDIT-001 — CREATE records correct actor and action
+
+  Precondition: Authenticated as User A.
+  Action: POST /workspaces/{wid}/areas with valid polygon.
+  Assert:
+  - Response 201.
+  - GET /workspaces/{wid}/areas/{aid}/versions returns 1 version.
+  - versions[0].changeType = "CREATED".
+  - versions[0].createdBy = userAId (asserts the specific UUID, not just non-null).
+  - versions[0].createdAt is not null.
+
+  TC-AUDIT-002 — UPDATE records correct actor and resulting version
+
+  Precondition: Area at version 1.
+  Action: PUT by User B.
+  Assert:
+  - Response 200.
+  - versions[0].changeType = "UPDATED".
+  - versions[0].createdBy = userBId.
+  - versions[0].version = 2.
+
+  TC-AUDIT-003 — DELETE records correct actor and status
+
+  Action: DELETE by User A at expectedVersion.
+  Assert:
+  - versions[0].changeType = "DELETED".
+  - versions[0].status = "DELETED".
+  - versions[0].createdBy = userAId.
+
+  TC-AUDIT-004 — RESTORE records correct actor and new version
+
+  Action: Restore version 1 by User A when current = 2.
+  Assert:
+  - versions[0].changeType = "RESTORED".
+  - versions[0].version = 3.
+  - versions[0].createdBy = userAId.
+
+  TC-AUDIT-005 — Failed mutation creates no committed audit record
+
+  Action: PUT with invalid geometry (→ 400).
+  Assert:
+  - GET /workspaces/{wid}/areas/{aid}/versions count is unchanged.
+  - No new version was created.
+
+  Note: TC-AUDIT-005 is partially covered by AreaWebSocketIntegrationTest.invalidGeometryCreate_producesNoEvent and DrawingRateLimitIntegrationTest.rateLimitedRequest_producesNoDatabaseWriteAndNoWebSocketEvent. A dedicated AreaAuditIntegrationTest consolidates these into explicit named audit tests.
+
+  Existing test gap identified: AreaVersionHistoryIntegrationTest line 211 asserts v2.createdBy()).isNotNull() but does NOT verify the specific user UUID. TC-AUDIT-001 through TC-AUDIT-004 would add this missing assertion.
+
+  ---
+  22. Documentation Changes
+
+  DESIGN.md:
+  - Add a "Audit Trail" subsection under §Security & Observability that explicitly separates the three concerns: (1) AreaVersion = version history + Area mutation audit; (2) no dedicated audit_log table; (3) operational metrics = Task 16.
+  - State that workspace context for audit is derivable via area.workspace_id.
+  - Add boundary statement: "Failed mutations (400/409/429/500) produce no committed AreaVersion and are not audited through persistent records."
+
+  README.md:
+  - Features table: replace "no audit log" with "Area mutations have an immutable actor/action/time history through AreaVersion."
+  - Known Limitations: remove the "no audit log" entry, add a nuanced statement about non-Area events (auth).
+  - Security section: add "Audit trail" row.
+
+  TEST_CASES.md:
+  - Add section ## 4f. Audit Trail Tests with TC-AUDIT-001 through TC-AUDIT-005.
+
+  ---
+  23. Dependencies
+
+  None. No new Maven or npm dependencies required. No new infrastructure.
+
+  ---
+  24. Risks / Remaining Limitations
+
+  ┌─────────────────────────────────────────────────────────────────┬────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+  │                              Risk                               │                                                                 Notes                                                                  │
+  ├─────────────────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ workspace_id not directly on area_version                       │ Requires JOIN for workspace-scoped audit queries. Acceptable for prototype. Production might add denormalization.                      │
+  ├─────────────────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ No persistent login trail                                       │ For email-only prototype auth this is acceptable. A production system with real credentials would need login event persistence.        │
+  ├─────────────────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ In-process rate limiter audit                                   │ 429 events are only in application logs. No persistent trail of "user X hit rate limit N times." Metrics in Task 16 address frequency. │
+  ├─────────────────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ AreaVersion doesn't distinguish "who approved" from "who acted" │ Not a concern for the current single-role prototype.                                                                                   │
+  ├─────────────────────────────────────────────────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+  │ No data-retention implementation                                │ AreaVersion grows indefinitely. Retention jobs are explicitly out of scope.                                                            │
+  └─────────────────────────────────────────────────────────────────┴────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+  ---
+  25. Preliminary Task 16 — Observability / Metrics Scope
+
+  Already in pom.xml: spring-boot-starter-actuator. Health endpoint already exposed at /actuator/health. Micrometer core is a transitive dependency of the Actuator starter.
+
+  Not yet in pom.xml: micrometer-registry-prometheus (needed to expose metrics in Prometheus format). This would be the only new dependency for Task 16, and it is optional depending on whether a Prometheus scrape endpoint is wanted.
+
+  Built-in metrics provided by Actuator today (no code changes):
+  - http.server.requests — request count, latency, status codes per endpoint
+  - hikaricp.* — connection pool utilization
+  - jvm.* — memory, GC, threads
+  - system.* — CPU
+
+  Custom Micrometer counters/gauges for Task 16:
+
+  area.created.total               Counter   — incremented in AreaService.createArea after commit
+  area.updated.total               Counter   — AreaService.updateArea
+  area.deleted.total               Counter   — AreaService.deleteArea
+  area.restored.total              Counter   — AreaService.restoreArea
+
+  area.version_conflict.total      Counter   — thrown in AreaService (409 VersionConflictException)
+  area.invalid_geometry.total      Counter   — thrown in AreaService (400 InvalidGeometryException)
+
+  drawing.rate_limit.rejected.total  Counter — thrown in DrawingRateLimitInterceptor
+
+  auth.register.total              Counter   — AuthService.register (after commit)
+  auth.login.total                 Counter   — AuthService.login
+
+  websocket.connections.active     Gauge     — tracked via SessionDisconnectEvent / SimpUserRegistry
+  websocket.events.published.total Counter   — incremented in AreaEventRelay.onAreaEvent
+
+  Task 16 boundary: All signals above are counters/gauges, not persistent DB rows. They are reset on restart (acceptable for operational monitoring). No DB migration. No new tables. No audit records.
+
+  ---
+  Explicit Answers to Core Questions
+
+  A. What persistent audit information is genuinely missing today?
+
+  Nothing is missing for Area mutations. Every Area mutation commits an AreaVersion row containing actor (created_by), action (change_type), timestamp (created_at), resulting version, and full area state — all within the same transaction.
+
+  The only marginal gap is the absence of an explicit "action = REGISTERED" record for user registration, but users.created_at implicitly provides this. Login has no persistent trail, which is acceptable for a prototype with email-only auth.
+
+  B. Can AreaVersion satisfy the audit requirement for Area mutations?
+
+  Yes, fully. DESIGN.md explicitly states this. All four audit questions — who, what, when, resulting state — are answered directly by columns on area_version (with a single JOIN to area for workspace context). The existing public API already exposes createdBy on every AreaVersionResponse.
+
+  C. Is a dedicated audit_log table justified? Why or why not?
+
+  No. It would duplicate information already committed atomically in AreaVersion for every Area mutation. It adds one extra write per mutation (50% write amplification for the core operation), produces no new
+C. Is a dedicated audit_log table justified? Why or why not?
+
+No. It would duplicate information already committed atomically in AreaVersion for every Area mutation. It adds one extra write per mutation (50% write amplification for the core operation), produces no new information, and contradicts DESIGN.md's explicit intent. The "operations not represented by AreaVersion" clause applies to auth events, which do not warrant a dedicated table for this prototype.
+
+D. Which analytics signals should NOT be persisted and should instead be implemented in Task 16?
+
+All of the following should be Micrometer counters/gauges in Task 16, not DB rows:
+- Area mutation counts (area.created, area.updated, area.deleted, area.restored)
+- Error event counts (area.version_conflict, area.invalid_geometry)
+- Rate limit rejection count (drawing.rate_limit.rejected)
+- Auth event counts (auth.register, auth.login)
+- WebSocket active connection gauge and event-published counter
+- REST latency, error rate, request rate (built-in Actuator/Micrometer)
+- HikariCP and JVM metrics (built-in)
+
+None of these belong in PostgreSQL. They are operational signals with no business audit value, they are already adequately captured by application logs at the event level, and their frequency makes DB persistence write-amplification that is not justified.
+
+---
+26. Implementation Sequence for Task 14
+
+1. Add AreaAuditIntegrationTest.java (5 tests: TC-AUDIT-001 through TC-AUDIT-005).
+2. Update docs/DESIGN.md (add explicit Audit Trail subsection, three-concern separation, boundary with Task 16).
+3. Update docs/TEST_CASES.md (add section 4f with TC-AUDIT-001 through TC-AUDIT-005).
+4. Update README.md (Features, Known Limitations, Security).
+5. Run test suite to confirm all 108 tests pass (103 existing + 5 new).
+
+---
+
+
+
+
+
+
+Approved.
+
+Proceed with Task 14 using Option A:
+
+    AreaVersion = the persistent audit trail for Area mutations.
+
+Do NOT introduce:
+
+- audit_log table
+- Flyway migration
+- new production audit service
+- new production dependencies
+- audit REST API
+- audit UI
+- operational metrics from Task 16
+
+Implement only the approved Task 14 scope:
+
+1. Add AreaAuditIntegrationTest.java.
+
+The tests must explicitly verify the audit invariants already provided by
+AreaVersion:
+
+- CREATE:
+    changeType = CREATED
+    createdBy = authenticated user's exact UUID
+    createdAt != null
+    version = 1
+
+- UPDATE:
+    changeType = UPDATED
+    createdBy = authenticated user's exact UUID
+    resulting version is correct
+
+- DELETE:
+    changeType = DELETED
+    status = DELETED
+    createdBy = authenticated user's exact UUID
+
+- RESTORE:
+    changeType = RESTORED
+    createdBy = authenticated user's exact UUID
+    resulting version is correct
+
+- Failed mutation:
+    no additional committed AreaVersion is created
+
+Use real JWT authentication exactly as the existing integration tests do.
+Do not disable Spring Security.
+
+Prefer using two different authenticated users where useful so the tests
+prove that created_by comes from the authenticated actor rather than from
+seed data or the original Area creator.
+
+2. Update docs/DESIGN.md.
+
+Make the architecture explicit:
+
+    AreaVersion
+        = Area state/version history
+        + persistent Area mutation audit trail
+
+It answers:
+
+    who        -> created_by
+    what       -> change_type + area_id
+    when       -> created_at
+    result     -> versioned Area state
+
+State explicitly that no dedicated audit_log table exists because it would
+duplicate AreaVersion for the current business operations.
+
+Also clearly separate:
+
+    AreaVersion / business audit
+    application logs
+    Task 16 operational metrics
+
+Document that failed/rejected operations do not create AreaVersion records.
+
+3. Update docs/TEST_CASES.md.
+
+Add the approved Task 14 audit test cases.
+
+Keep numbering/section structure consistent with the existing document.
+
+4. Update README.md.
+
+Accurately describe the implemented audit capability.
+
+Do NOT claim:
+
+    "all user actions are audited"
+
+because that would be stronger than the implementation.
+
+Prefer wording equivalent to:
+
+    Area mutations have an immutable audit trail through AreaVersion,
+    recording actor, action, timestamp, resulting version and Area state.
+
+Document the limitation that non-Area activity such as login/read requests
+does not have a dedicated persistent audit trail.
+
+Do not describe this as a missing requirement if DESIGN.md explicitly
+defines AreaVersion as the Area mutation audit mechanism.
+
+5. Do NOT implement Task 16 yet.
+
+In particular, do not add:
+
+- custom Micrometer counters
+- Prometheus registry
+- WebSocket gauges
+- auth counters
+- rate-limit counters
+
+Those belong to the next observability task.
+
+6. Run the complete backend test suite after implementation.
+
+Report the ACTUAL Maven test count from the test run.
+
+Do not assume in advance that the total will be 108.
+
+Also run the frontend build only if documentation or implementation changes
+somehow touch frontend files. Otherwise explicitly state that no frontend
+files were changed and a frontend build was unnecessary.
+
+7. Final report must include:
+
+- exact files changed
+- tests added
+- actual total Maven test count
+- failures/errors/skipped
+- confirmation that no production Java code changed
+- confirmation that no DB migration was added
+- confirmation that no dependencies were added
+- final documented AreaVersion audit semantics
+- remaining audit limitations
+- explicit boundary with Task 16
+
+If implementation reveals that any of the assumptions from the
+pre-implementation report are incorrect, stop and report the discrepancy
+before expanding scope.
+
+
+---
+Task 14 — Final Report
+
+Exact files changed:
+- backend/src/test/java/com/snapland/gis/AreaAuditIntegrationTest.java — NEW (5 tests)
+- docs/DESIGN.md — MODIFIED (replaced Audit Logging section with explicit Audit Trail section)
+- docs/TEST_CASES.md — MODIFIED (scope, section 4f with TC-AUDIT-001–005, Phase 1 table rows 22–26)
+- README.md — MODIFIED (Features, Security, Known Limitations, Testing table and count)
+
+Tests added: 5 (TC-AUDIT-001 through TC-AUDIT-005)
+
+Actual Maven test count: 108 tests, 0 failures, 0 errors, 0 skipped
+
+No production Java code changed.
+
+No DB migration added.
+
+No new dependencies added.
+
+---
+Documented AreaVersion audit semantics:
+
+Every committed Area mutation (create, update, delete, restore) atomically writes one area_version row containing: created_by (authenticated actor UUID), change_type (CREATED/UPDATED/DELETED/RESTORED), created_at (timestamp), version (resulting version number), and the full Area state snapshot (name, geometry, area_km2, status). The workspace is reachable via one JOIN (area_version.area_id → area.workspace_id). The table is append-only — no AreaVersion record is ever modified.
+
+TC-AUDIT-002 through TC-AUDIT-004 use two distinct users (User A creates, User B mutates) and assert that createdBy equals the exact UUID of the caller, proving the audit record reflects the actor not the original creator.
+
+---
+Remaining audit limitations:
+- Non-Area activity (login, viewport reads, history reads) has no dedicated persistent audit trail.
+- User registration is implicitly recorded by users.created_at — no explicit "action = REGISTERED" record.
+- Login has no persistent trace (prototype email-only auth).
+- Failed/rejected operations (400/409/429/500) produce no AreaVersion; they are captured only in application logs.
+- workspace_id is not directly on area_version — requires one JOIN.
+
+Explicit boundary with Task 16:
+
+The following signals are NOT implemented in Task 14 and belong entirely to Task 16 (Observability/Metrics): Micrometer counters for mutation rates, version-conflict rate, invalid-geometry rate, rate-limit rejection count, auth event counts, WebSocket connection gauges, event-published counters, REST latency/error-rate metrics, HikariCP and JVM metrics. No custom counters, no micrometer-registry-prometheus dependency, no Actuator endpoint changes were made.

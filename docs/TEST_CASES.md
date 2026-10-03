@@ -26,10 +26,12 @@ observed through its HTTP API and browser UI.
 - Area persistence and reload
 - Real-time cross-browser synchronization of Area mutations
 - Per-user drawing action rate limiting (fixed-window, 50 mutations/minute/user)
+- Area mutation audit trail via AreaVersion (actor, action, timestamp, resulting state)
 
 **Explicitly out of scope (not yet implemented):**
 - Multi-instance scaling with Redis Pub/Sub
 - Presence and cursors
+- Operational metrics (Task 16)
 
 ---
 
@@ -2609,6 +2611,109 @@ All tests share the following preconditions unless stated otherwise:
 
 ---
 
+## 4f. Audit Trail Tests
+
+These tests verify that AreaVersion provides a complete and correct persistent audit trail for every Area mutation. Each committed AreaVersion records the exact authenticated actor (`createdBy`), the change type, the resulting version number, and a non-null timestamp.
+
+Two distinct users (User A = original Area creator, User B = separate actor) are used in TC-AUDIT-002 through TC-AUDIT-004 to prove that `createdBy` reflects the caller who performed the mutation, not the Area's original creator.
+
+---
+
+### TC-AUDIT-001 — CREATE records actor, changeType, version, and timestamp
+
+**ID:** TC-AUDIT-001  
+**Category:** API Black-Box  
+**Priority:** P1
+
+**Steps:**
+1. Authenticate as User A.
+2. `POST /workspaces/{wid}/areas` with a valid polygon.
+3. `GET /workspaces/{wid}/areas/{aid}/versions`.
+
+**Expected Result:**
+- One version exists.
+- `version = 1`.
+- `changeType = "CREATED"`.
+- `createdBy = userA UUID` (exact match, not just non-null).
+- `createdAt` is not null.
+
+---
+
+### TC-AUDIT-002 — UPDATE records the calling actor (distinct from the Area creator)
+
+**ID:** TC-AUDIT-002  
+**Category:** API Black-Box  
+**Priority:** P1
+
+**Steps:**
+1. User A creates an Area (version 1).
+2. User B updates the Area (PUT with `expectedVersion=1`).
+3. `GET /workspaces/{wid}/areas/{aid}/versions`.
+
+**Expected Result:**
+- Two versions exist.
+- `versions[0].changeType = "UPDATED"`.
+- `versions[0].createdBy = userB UUID` — the update actor, not the creator.
+- `versions[0].version = 2`.
+- `versions[1].createdBy = userA UUID` — original creator unchanged.
+
+---
+
+### TC-AUDIT-003 — DELETE records actor, changeType=DELETED, status=DELETED
+
+**ID:** TC-AUDIT-003  
+**Category:** API Black-Box  
+**Priority:** P1
+
+**Steps:**
+1. User A creates an Area (version 1).
+2. User B deletes the Area (`DELETE ?expectedVersion=1`).
+3. `GET /workspaces/{wid}/areas/{aid}/versions`.
+
+**Expected Result:**
+- Two versions exist.
+- `versions[0].changeType = "DELETED"`.
+- `versions[0].status = "DELETED"`.
+- `versions[0].createdBy = userB UUID`.
+
+---
+
+### TC-AUDIT-004 — RESTORE records the calling actor and the resulting version
+
+**ID:** TC-AUDIT-004  
+**Category:** API Black-Box  
+**Priority:** P1
+
+**Steps:**
+1. User A creates (v1) and updates (v2) an Area.
+2. User B restores to version 1 (POST `.../versions/1/restore` with `expectedVersion=2`).
+3. `GET /workspaces/{wid}/areas/{aid}/versions`.
+
+**Expected Result:**
+- Three versions exist.
+- `versions[0].changeType = "RESTORED"`.
+- `versions[0].createdBy = userB UUID`.
+- `versions[0].version = 3`.
+
+---
+
+### TC-AUDIT-005 — Failed mutation creates no committed AreaVersion
+
+**ID:** TC-AUDIT-005  
+**Category:** API Black-Box  
+**Priority:** P1
+
+**Steps:**
+1. Create a valid Area (version 1) — records 1 AreaVersion row.
+2. Attempt PUT with a self-intersecting polygon geometry (→ `400 INVALID_GEOMETRY`).
+3. Count AreaVersion rows.
+
+**Expected Result:**
+- The PUT response is `400 Bad Request` with `code = "INVALID_GEOMETRY"`.
+- The AreaVersion count is unchanged (transaction was rolled back — no audit record for a failed mutation).
+
+---
+
 ## 6. Discrepancies and Observations
 
 The following items describe gaps between the current prototype and the
@@ -2689,6 +2794,11 @@ an unclosed ring returns `400 INVALID_GEOMETRY`.
 | 19 | TC-UI-HISTORY-003 | Restore from History panel updates the map |
 | 20 | TC-WS-002 | AREA_CREATED event: connection and delivery golden path |
 | 21 | TC-UI-WS-001 | Created Area appears in another browser without refresh |
+| 22 | TC-AUDIT-001 | CREATE audit: actor, changeType, version=1, createdAt |
+| 23 | TC-AUDIT-002 | UPDATE audit: actor is caller not creator; version incremented |
+| 24 | TC-AUDIT-003 | DELETE audit: actor, DELETED changeType and status |
+| 25 | TC-AUDIT-004 | RESTORE audit: actor is caller; version incremented |
+| 26 | TC-AUDIT-005 | Failed mutation creates no committed AreaVersion |
 
 **Phase 2 — Validation and isolation**
 

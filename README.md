@@ -411,6 +411,13 @@ Flyway migrations are applied automatically on startup.
 
 A partial GiST spatial index covers `area.geometry WHERE status = 'ACTIVE'`. This supports efficient bounding-box and containment queries against non-deleted areas while keeping deleted rows out of the index.
 
+The `performance/` directory contains a reproducible load-test setup for the viewport query:
+
+- `performance/seed-areas.sql` — seeds 1 000 / 10 000 / 50 000 synthetic polygons into a dedicated workspace using `generate_series()`.
+- `performance/viewport-load.js` — k6 script that ramps from 10 to 100 virtual users over ~4 minutes.
+
+See [`performance/README.md`](performance/README.md) for the full developer workflow, EXPLAIN ANALYZE instructions, and the results matrix to fill in after measurement.
+
 ---
 
 ## Security

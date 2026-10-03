@@ -507,11 +507,14 @@ export class MapComponent implements AfterViewInit, OnDestroy {
       this.cdr.detectChanges();
     });
 
-    this.map.on(L.Draw.Event.EDITVERTEX, () => {
+    this.map.on('mousemove', () => {
       if (!this.editLayer) return;
       const latlngs = (this.editLayer.getLatLngs() as L.LatLng[][])[0];
-      this.editingAreaKm2 = computeGeodesicAreaKm2(latlngs);
-      this.cdr.detectChanges();
+      const area = computeGeodesicAreaKm2(latlngs);
+      if (area !== this.editingAreaKm2) {
+        this.editingAreaKm2 = area;
+        this.cdr.detectChanges();
+      }
     });
 
     this.map.on('moveend zoomend', () => this.loadViewport());
@@ -658,8 +661,8 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     });
 
     polygon.bindTooltip(
-      `<strong>${area.name}</strong><br>${area.areaKm2.toFixed(3)} km²`,
-      { sticky: true, opacity: 0.9 },
+      `<div class="area-label-name">${area.name}</div><div class="area-label-size">${area.areaKm2.toFixed(3)} km²</div>`,
+      { permanent: true, direction: 'center', className: 'area-label', opacity: 1 },
     );
 
     polygon.on('contextmenu', (e: L.LeafletMouseEvent) => {

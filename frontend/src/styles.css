@@ -10,6 +10,33 @@ body {
   outline: none;
 }
 
+.area-label {
+  background: none;
+  border: none;
+  box-shadow: none;
+  text-align: center;
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.area-label::before {
+  display: none;
+}
+
+.area-label-name {
+  color: #003380;
+  font-size: 12px;
+  font-weight: 600;
+  text-shadow: 0 0 3px white, 0 0 3px white, 0 0 3px white;
+}
+
+.area-label-size {
+  color: #336;
+  font-size: 11px;
+  font-weight: 400;
+  text-shadow: 0 0 3px white, 0 0 3px white, 0 0 3px white;
+}
+
 .leaflet-draw-tooltip,
 .leaflet-draw-actions {
   display: none !important;

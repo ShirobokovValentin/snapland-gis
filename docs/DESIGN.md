@@ -1785,6 +1785,20 @@ Both events are delivered on the per-workspace presence topic: `/topic/workspace
 
 **Persistence:** Presence state is ephemeral (not persisted to PostgreSQL). It is derived from live session state and is cleared on application restart. PostgreSQL remains the source of truth for all persistent application state.
 
+### Geographic Data Caching Decision
+
+A geographic data cache was evaluated for viewport-based Area queries but is intentionally not implemented at the current prototype stage.
+
+**Evaluated strategies:**
+
+*Exact BBOX cache (Candidate A):* Cache the result of each `findInViewport` call keyed by the exact bounding-box coordinates. Rejected because the viewport key is derived from floating-point Leaflet map bounds that change with every pan or zoom event. Two visually identical map positions produce different keys, so the hit rate is near zero. Invalidation on Area mutation is also complex because the updated geometry's old bounding box is not available during an `UPDATE` operation (the entity is overwritten before the event fires), making it impossible to evict only the affected keys.
+
+*Whole-workspace cache (Candidate B):* Cache the complete Area list for a workspace and perform the viewport intersection in Java. Rejected because it bypasses PostGIS/GiST — the designated spatial query engine — and replaces indexed spatial lookups with O(N) Java-side iteration. This violates the design principle that PostGIS is the source of truth for spatial queries and is explicitly excluded from the requirements ("Do not perform viewport filtering in application code").
+
+*Spatial-cell / Web Mercator tile cache (Candidate C):* Cache query results keyed by Web Mercator tile coordinates (z/x/y). This produces stable, discrete cache keys whose geometry is fixed by the tile grid specification. Cache keys align with how the frontend will eventually request tiles, PostGIS/GiST remains the authoritative execution engine (queries are executed on cache miss), and invalidation can be implemented as a workspace-wide eviction on any Area mutation. This strategy is technically sound and avoids the problems of Candidates A and B.
+
+**Decision:** Caching is deferred for the prototype. The PostGIS partial GiST index (`idx_area_active_geometry`) provides efficient viewport queries for the current data volume. Introducing a tile cache before a measured performance bottleneck exists adds complexity without demonstrated benefit. If viewport query latency becomes a production concern, Candidate C (tile cache with workspace-wide invalidation, backed by Caffeine for single-instance or Redis for multi-instance deployments) is the recommended starting point.
+
 ### Health Checks
 
 Services expose Liveness and Readiness health checks.

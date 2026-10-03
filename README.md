@@ -428,6 +428,10 @@ These are deliberate prototype constraints, not defects.
 | Audit trail covers Area mutations only | Non-Area activity (login, read requests) has no dedicated persistent audit trail. User registration is implicitly recorded by `users.created_at`. Login has no persistent trace. |
 | Prometheus endpoint is unauthenticated | `/actuator/prometheus` is permit-all as a prototype simplification. In production, restrict to an internal network, a separate management port, or an infrastructure ACL. |
 
+### Geographic Caching
+
+Geographic query caching was evaluated but is not currently enabled. The PostGIS partial GiST index provides efficient viewport queries for the prototype data volume. If query latency becomes a bottleneck at production scale, a Web Mercator tile cache (z/x/y keys, workspace-wide invalidation on mutation) is the recommended next step. See `docs/DESIGN.md` — *Geographic Data Caching Decision* for the full evaluation.
+
 ---
 
 ## Production / Scaling

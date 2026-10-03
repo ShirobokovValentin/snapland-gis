@@ -16,13 +16,9 @@ import java.util.Collections;
 
 /**
  * Authenticates STOMP CONNECT frames using the JWT carried in the
- * {@code Authorization: Bearer <token>} header. On success the decoded JWT is
- * set as the WebSocket session's {@link java.security.Principal} so that later
- * SUBSCRIBE and SEND frames can inspect the authenticated identity.
- *
- * The HTTP upgrade (/ws/**) remains permitAll because browser WebSocket clients
- * cannot send custom headers during the HTTP handshake; authentication is
- * enforced here at the application-protocol level instead.
+ * {@code Authorization: Bearer <token>} header. Also extracts the optional
+ * {@code workspace-id} header and registers it in {@link WorkspaceSessionRegistry}
+ * so that presence tracking can scope the session to the correct workspace.
  */
 @Component
 public class JwtChannelInterceptor implements ChannelInterceptor {
@@ -30,9 +26,11 @@ public class JwtChannelInterceptor implements ChannelInterceptor {
     private static final String BEARER_PREFIX = "Bearer ";
 
     private final JwtDecoder jwtDecoder;
+    private final WorkspaceSessionRegistry workspaceSessionRegistry;
 
-    public JwtChannelInterceptor(JwtDecoder jwtDecoder) {
+    public JwtChannelInterceptor(JwtDecoder jwtDecoder, WorkspaceSessionRegistry workspaceSessionRegistry) {
         this.jwtDecoder = jwtDecoder;
+        this.workspaceSessionRegistry = workspaceSessionRegistry;
     }
 
     @Override
@@ -50,13 +48,15 @@ public class JwtChannelInterceptor implements ChannelInterceptor {
         }
 
         String token = authHeader.substring(BEARER_PREFIX.length());
-        // JwtDecoder throws JwtException (BadJwtException / JwtValidationException)
-        // for invalid signatures and expired tokens. Spring's STOMP infrastructure
-        // catches MessagingException-wrapped runtime exceptions from preSend, sends
-        // a STOMP ERROR frame, and closes the WebSocket session.
         Jwt jwt = jwtDecoder.decode(token);
-
         accessor.setUser(new JwtAuthenticationToken(jwt, Collections.emptyList()));
+
+        String workspaceId = accessor.getFirstNativeHeader("workspace-id");
+        String sessionId = accessor.getSessionId();
+        if (workspaceId != null && !workspaceId.isBlank() && sessionId != null) {
+            workspaceSessionRegistry.register(sessionId, workspaceId.trim());
+        }
+
         return message;
     }
 }

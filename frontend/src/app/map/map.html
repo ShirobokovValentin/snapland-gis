@@ -14,14 +14,27 @@
     >Satellite</button>
   </div>
 
+  @if (contextMenu) {
+    <div
+      class="context-menu"
+      [style.left.px]="contextMenu.x"
+      [style.top.px]="contextMenu.y"
+    >
+      <button class="context-menu-item" (click)="contextMenuEdit()">Edit</button>
+      <button class="context-menu-item" (click)="contextMenuDelete()">Delete</button>
+      <button class="context-menu-item" (click)="contextMenuHistory()">History</button>
+    </div>
+  }
+
   <button class="logout-btn" (click)="logout()">Sign out</button>
+  <button class="change-workspace-btn" (click)="changeWorkspace()">← Workspaces</button>
   <button class="deleted-areas-btn" (click)="openDeletedAreas()">Deleted Areas</button>
 
   @if (activeUsers.size > 0) {
     <div class="presence-panel">
       <div class="presence-title">Active users ({{ activeUsers.size }})</div>
       @for (user of activeUserList; track user.id) {
-        <div class="presence-item">{{ user.name }}</div>
+        <div class="presence-item" [class.presence-item-self]="user.id === currentUserId">{{ user.name }}</div>
       }
     </div>
   }
@@ -33,6 +46,12 @@
   @if (isDrawing && liveDrawArea !== null) {
     <div class="drawing-area-indicator">
       Area: {{ liveDrawArea | number: '1.0-3' }} km²
+    </div>
+  }
+
+  @if (editingArea && editingAreaKm2 !== null) {
+    <div class="drawing-area-indicator">
+      Area: {{ editingAreaKm2 | number: '1.0-3' }} km²
     </div>
   }
 

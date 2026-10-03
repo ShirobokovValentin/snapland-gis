@@ -33,7 +33,7 @@ export class RealtimeService {
         }
         // Refresh connectHeaders with the current token before every
         // connection attempt so reconnects always use the live JWT.
-        this.client!.connectHeaders = { Authorization: `Bearer ${token}` };
+        this.client!.connectHeaders = { Authorization: `Bearer ${token}`, 'workspace-id': workspaceId };
       },
       onConnect: () => {
         this.client!.subscribe(`/topic/workspace/${workspaceId}`, (message) => {

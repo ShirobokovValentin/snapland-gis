@@ -10,14 +10,13 @@ import { DatePipe, DecimalPipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import * as L from 'leaflet';
 import 'leaflet-draw';
+import { ActivatedRoute, Router } from '@angular/router';
 import { AreaService } from '../area/area.service';
 import { Area, AreaEventMessage, AreaVersionResponse, DeletedArea } from '../area/area.model';
 import { RealtimeService } from '../realtime/realtime.service';
 import { PresenceService } from '../realtime/presence.service';
 import { PresenceEventMessage, UserPresence } from '../realtime/presence.model';
 import { AuthService } from '../auth/auth.service';
-import { Router } from '@angular/router';
-import { environment } from '../../environments/environment';
 
 // Temporary satellite provider: Esri World Imagery.
 // GovMap remains the target provider per requirements; integration is blocked
@@ -71,6 +70,8 @@ export class MapComponent implements AfterViewInit, OnDestroy {
   private previewLayer: L.Polygon | null = null;
   private previewItems!: L.FeatureGroup;
 
+  contextMenu: { x: number; y: number; area: Area; polygon: L.Polygon } | null = null;
+
   activeBaseMap: 'map' | 'satellite' = 'map';
   wsStatus: 'connected' | 'reconnecting' = 'connected';
   activeUsers = new Map<string, UserPresence>();
@@ -82,10 +83,15 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     return Array.from(this.activeUsers.values());
   }
 
+  get currentUserId(): string | null {
+    return this.authService.getCurrentUserId();
+  }
+
   isDrawing = false;
   liveDrawArea: number | null = null;
   editingAreaKm2: number | null = null;
 
+  private workspaceId!: string;
   private map!: L.Map;
   private osmLayer!: L.TileLayer;
   private satelliteLayer!: L.TileLayer;
@@ -94,6 +100,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
   private persistedItems!: L.FeatureGroup;
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   private editHandler: any = null;
+  private editOriginalPolygon: L.Polygon | null = null;
 
   constructor(
     private areaService: AreaService,
@@ -101,10 +108,12 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     private presenceService: PresenceService,
     private authService: AuthService,
     private router: Router,
+    private route: ActivatedRoute,
     private cdr: ChangeDetectorRef,
   ) {}
 
   ngAfterViewInit(): void {
+    this.workspaceId = this.route.snapshot.paramMap.get('workspaceId')!;
     this.initMap();
     this.connectToRealtime();
   }
@@ -121,7 +130,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     const latlngs = (this.pendingLayer.getLatLngs() as L.LatLng[][])[0];
     this.saving = true;
 
-    this.areaService.createArea(this.areaName.trim(), latlngs).subscribe({
+    this.areaService.createArea(this.workspaceId, this.areaName.trim(), latlngs).subscribe({
       next: (area) => {
         this.saving = false;
         this.clearPending();
@@ -153,7 +162,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     this.editSaving = true;
 
     this.areaService
-      .updateArea(this.editingArea.id, this.editingArea.currentVersion, this.editName.trim(), latlngs)
+      .updateArea(this.workspaceId, this.editingArea.id, this.editingArea.currentVersion, this.editName.trim(), latlngs)
       .subscribe({
         next: (area) => {
           this.editSaving = false;
@@ -181,6 +190,9 @@ export class MapComponent implements AfterViewInit, OnDestroy {
       this.editHandler.disable();
       this.editHandler = null;
     }
+    if (this.editOriginalPolygon) {
+      this.persistedItems.addLayer(this.editOriginalPolygon);
+    }
     this.clearEdit();
   }
 
@@ -195,7 +207,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     }
 
     this.deleteSaving = true;
-    this.areaService.deleteArea(area.id, area.currentVersion).subscribe({
+    this.areaService.deleteArea(this.workspaceId, area.id, area.currentVersion).subscribe({
       next: (deleted) => {
         this.deleteSaving = false;
         this.clearEdit();
@@ -228,7 +240,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     const targetVersion = area.currentVersion - 1;
     this.restoreSaving = true;
 
-    this.areaService.restoreArea(area.id, targetVersion, area.currentVersion).subscribe({
+    this.areaService.restoreArea(this.workspaceId, area.id, targetVersion, area.currentVersion).subscribe({
       next: (restored) => {
         this.restoreSaving = false;
         this.clearDeletedArea();
@@ -264,7 +276,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     this.selectedHistoryVersion = null;
     this.cdr.detectChanges();
 
-    this.areaService.getAreaVersions(area.id).subscribe({
+    this.areaService.getAreaVersions(this.workspaceId, area.id).subscribe({
       next: (versions) => {
         this.historyVersions = versions;
         this.historyLoading = false;
@@ -312,7 +324,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     this.historySaving = true;
     this.cdr.detectChanges();
 
-    this.areaService.restoreArea(areaId, version.version, expectedVersion).subscribe({
+    this.areaService.restoreArea(this.workspaceId, areaId, version.version, expectedVersion).subscribe({
       next: () => {
         this.historySaving = false;
         this.clearHistory();
@@ -351,7 +363,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     this.deletedAreaProcessingId = area.id;
     this.cdr.detectChanges();
 
-    this.areaService.restoreArea(area.id, targetVersion, area.currentVersion).subscribe({
+    this.areaService.restoreArea(this.workspaceId, area.id, targetVersion, area.currentVersion).subscribe({
       next: () => {
         this.deletedAreaProcessingId = null;
         this.deletedAreas = this.deletedAreas.filter(a => a.id !== area.id);
@@ -381,7 +393,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     this.deletedAreaProcessingId = area.id;
     this.cdr.detectChanges();
 
-    this.areaService.permanentDeleteArea(area.id, area.currentVersion).subscribe({
+    this.areaService.permanentDeleteArea(this.workspaceId, area.id, area.currentVersion).subscribe({
       next: () => {
         this.deletedAreaProcessingId = null;
         this.deletedAreas = this.deletedAreas.filter(a => a.id !== area.id);
@@ -398,6 +410,11 @@ export class MapComponent implements AfterViewInit, OnDestroy {
         }
       },
     });
+  }
+
+  changeWorkspace(): void {
+    this.realtimeService.disconnect();
+    this.router.navigate(['/workspaces']);
   }
 
   logout(): void {
@@ -489,12 +506,18 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     });
 
     this.map.on('moveend zoomend', () => this.loadViewport());
+    this.map.on('click contextmenu', () => {
+      if (this.contextMenu) {
+        this.contextMenu = null;
+        this.cdr.detectChanges();
+      }
+    });
     this.loadViewport();
   }
 
   private loadViewport(): void {
     const bounds = this.map.getBounds();
-    this.areaService.getAreas(bounds).subscribe({
+    this.areaService.getAreas(this.workspaceId, bounds).subscribe({
       next: (areas) => {
         this.persistedItems.clearLayers();
         areas.forEach((area) => {
@@ -508,7 +531,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
 
   private connectToRealtime(): void {
     this.realtimeService.connect(
-      environment.workspaceId,
+      this.workspaceId,
       (event) => this.handleRealtimeEvent(event),
       () => this.loadViewport(),
       (status) => {
@@ -525,7 +548,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
   private loadPresence(): void {
     this.presenceLoading = true;
     this.presenceBuffer = [];
-    this.presenceService.getPresence(environment.workspaceId).subscribe({
+    this.presenceService.getPresence(this.workspaceId).subscribe({
       next: (users) => {
         this.activeUsers = new Map(users.map(u => [u.id, u]));
         const buffer = this.presenceBuffer;
@@ -562,7 +585,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
   private loadDeletedAreas(): void {
     this.deletedAreasLoading = true;
     this.cdr.detectChanges();
-    this.areaService.getDeletedAreas().subscribe({
+    this.areaService.getDeletedAreas(this.workspaceId).subscribe({
       next: (areas) => {
         this.deletedAreas = areas;
         this.deletedAreasLoading = false;
@@ -577,23 +600,30 @@ export class MapComponent implements AfterViewInit, OnDestroy {
   }
 
   private handleRealtimeEvent(event: AreaEventMessage): void {
-    if (event.type === 'AREA_UPDATED' && this.editingArea?.id === event.payload.id) {
+    if (event.type === 'WORKSPACE_DELETED') {
+      this.realtimeService.disconnect();
+      this.router.navigate(['/workspaces']);
+      return;
+    }
+    if (event.type === 'AREA_UPDATED' && this.editingArea?.id === event.payload?.id) {
       this.editVersionWarning = true;
       this.cdr.detectChanges();
     }
     if (event.type === 'AREA_PERMANENTLY_DELETED') {
-      const deletedId = event.payload.id;
-      if (this.deletedArea?.id === deletedId) {
-        this.clearDeletedArea();
-      }
-      if (this.deletedAreasPanelOpen) {
-        this.deletedAreas = this.deletedAreas.filter(a => a.id !== deletedId);
-        this.cdr.detectChanges();
+      const deletedId = event.payload?.id;
+      if (deletedId) {
+        if (this.deletedArea?.id === deletedId) {
+          this.clearDeletedArea();
+        }
+        if (this.deletedAreasPanelOpen) {
+          this.deletedAreas = this.deletedAreas.filter(a => a.id !== deletedId);
+          this.cdr.detectChanges();
+        }
       }
       return;
     }
     if (event.type === 'AREA_RESTORED' && this.deletedAreasPanelOpen) {
-      this.deletedAreas = this.deletedAreas.filter(a => a.id !== event.payload.id);
+      this.deletedAreas = this.deletedAreas.filter(a => a.id !== event.payload?.id);
     }
     this.loadViewport();
   }
@@ -601,36 +631,76 @@ export class MapComponent implements AfterViewInit, OnDestroy {
   private addPersistedArea(area: Area): void {
     const coords = area.geometry.coordinates[0];
     const latlngs = coords.map((c) => L.latLng(c[1], c[0]));
-    const polygon = L.polygon(latlngs, { color: '#0066cc', weight: 2 });
+    const polygon = L.polygon(latlngs, { color: '#0066cc', weight: 2, fillOpacity: 0.2 });
 
-    const editBtn = `<button class="popup-edit-btn" data-area-id="${area.id}">Edit</button>`;
-    const historyBtn = `<button class="popup-history-btn" data-area-id="${area.id}">History</button>`;
-    polygon.bindPopup(
-      `<strong>${area.name}</strong><br>${area.areaKm2.toFixed(3)} km²<br><div class="popup-actions">${editBtn}${historyBtn}</div>`,
+    polygon.on('mouseover', () => polygon.setStyle({ fillOpacity: 0.45 }));
+    polygon.on('mouseout', () => polygon.setStyle({ fillOpacity: 0.2 }));
+
+    polygon.bindTooltip(
+      `<strong>${area.name}</strong><br>${area.areaKm2.toFixed(3)} km²`,
+      { sticky: true, opacity: 0.9 },
     );
 
-    polygon.on('popupopen', () => {
-      const edit = document.querySelector<HTMLButtonElement>(
-        `.popup-edit-btn[data-area-id="${area.id}"]`,
-      );
-      if (edit) {
-        edit.onclick = () => {
-          polygon.closePopup();
-          this.startEdit(area, polygon);
-        };
-      }
-      const history = document.querySelector<HTMLButtonElement>(
-        `.popup-history-btn[data-area-id="${area.id}"]`,
-      );
-      if (history) {
-        history.onclick = () => {
-          polygon.closePopup();
-          this.openHistory(area);
-        };
-      }
+    polygon.on('contextmenu', (e: L.LeafletMouseEvent) => {
+      L.DomEvent.stopPropagation(e);
+      this.contextMenu = { x: e.originalEvent.clientX, y: e.originalEvent.clientY, area, polygon };
+      this.cdr.detectChanges();
     });
 
     this.persistedItems.addLayer(polygon);
+  }
+
+  contextMenuEdit(): void {
+    if (!this.contextMenu) return;
+    const { area, polygon } = this.contextMenu;
+    this.contextMenu = null;
+    this.startEdit(area, polygon);
+    this.cdr.detectChanges();
+  }
+
+  contextMenuDelete(): void {
+    if (!this.contextMenu) return;
+    const { area, polygon } = this.contextMenu;
+    this.contextMenu = null;
+    this.persistedItems.removeLayer(polygon);
+    this.deleteSaving = true;
+    this.cdr.detectChanges();
+    this.areaService.deleteArea(this.workspaceId, area.id, area.currentVersion).subscribe({
+      next: (deleted) => {
+        this.deleteSaving = false;
+        const coords = deleted.geometry.coordinates[0];
+        const latlngs = coords.map((c) => L.latLng(c[1], c[0]));
+        const grayPolygon = L.polygon(latlngs, { color: '#999999', weight: 2, opacity: 0.5, fillOpacity: 0.1 });
+        this.persistedItems.addLayer(grayPolygon);
+        this.deletedArea = deleted;
+        this.deletedLayer = grayPolygon;
+        this.cdr.detectChanges();
+      },
+      error: (err) => {
+        this.deleteSaving = false;
+        this.persistedItems.addLayer(polygon);
+        this.cdr.detectChanges();
+        if (err.status === 409) {
+          alert('This area was modified by another user. Reloading the latest version.');
+          this.loadViewport();
+        } else {
+          this.handleMutationError(err, 'delete area');
+        }
+      },
+    });
+  }
+
+  contextMenuHistory(): void {
+    if (!this.contextMenu) return;
+    const { area } = this.contextMenu;
+    this.contextMenu = null;
+    this.openHistory(area);
+    this.cdr.detectChanges();
+  }
+
+  closeContextMenu(): void {
+    this.contextMenu = null;
+    this.cdr.detectChanges();
   }
 
   private startEdit(area: Area, polygon: L.Polygon): void {
@@ -645,6 +715,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
 
     this.editItems.addLayer(editableLayer);
     this.persistedItems.removeLayer(polygon);
+    this.editOriginalPolygon = polygon;
 
     this.editingArea = area;
     this.editLayer = editableLayer;
@@ -680,6 +751,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     this.editItems.clearLayers();
     this.editingArea = null;
     this.editLayer = null;
+    this.editOriginalPolygon = null;
     this.editName = '';
     this.editSaving = false;
     this.deleteSaving = false;

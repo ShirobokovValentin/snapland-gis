@@ -8,23 +8,22 @@ import { Area, AreaVersionResponse, CreateAreaRequest, DeletedArea, UpdateAreaRe
 @Injectable({ providedIn: 'root' })
 export class AreaService {
   private readonly base = environment.apiUrl;
-  private readonly workspaceId = environment.workspaceId;
 
   constructor(private http: HttpClient) {}
 
-  createArea(name: string, latlngs: L.LatLng[]): Observable<Area> {
+  createArea(workspaceId: string, name: string, latlngs: L.LatLng[]): Observable<Area> {
     const coordinates = this.toClosedRing(latlngs);
     const body: CreateAreaRequest = {
       name,
       geometry: { type: 'Polygon', coordinates: [coordinates] },
     };
     return this.http.post<Area>(
-      `${this.base}/workspaces/${this.workspaceId}/areas`,
+      `${this.base}/workspaces/${workspaceId}/areas`,
       body,
     );
   }
 
-  updateArea(areaId: string, expectedVersion: number, name: string, latlngs: L.LatLng[]): Observable<Area> {
+  updateArea(workspaceId: string, areaId: string, expectedVersion: number, name: string, latlngs: L.LatLng[]): Observable<Area> {
     const coordinates = this.toClosedRing(latlngs);
     const body: UpdateAreaRequest = {
       expectedVersion,
@@ -32,48 +31,48 @@ export class AreaService {
       geometry: { type: 'Polygon', coordinates: [coordinates] },
     };
     return this.http.put<Area>(
-      `${this.base}/workspaces/${this.workspaceId}/areas/${areaId}`,
+      `${this.base}/workspaces/${workspaceId}/areas/${areaId}`,
       body,
     );
   }
 
-  deleteArea(areaId: string, expectedVersion: number): Observable<Area> {
+  deleteArea(workspaceId: string, areaId: string, expectedVersion: number): Observable<Area> {
     return this.http.delete<Area>(
-      `${this.base}/workspaces/${this.workspaceId}/areas/${areaId}`,
+      `${this.base}/workspaces/${workspaceId}/areas/${areaId}`,
       { params: { expectedVersion: expectedVersion.toString() } },
     );
   }
 
-  restoreArea(areaId: string, targetVersion: number, expectedVersion: number): Observable<Area> {
+  restoreArea(workspaceId: string, areaId: string, targetVersion: number, expectedVersion: number): Observable<Area> {
     return this.http.post<Area>(
-      `${this.base}/workspaces/${this.workspaceId}/areas/${areaId}/versions/${targetVersion}/restore`,
+      `${this.base}/workspaces/${workspaceId}/areas/${areaId}/versions/${targetVersion}/restore`,
       { expectedVersion },
     );
   }
 
-  getAreaVersions(areaId: string): Observable<AreaVersionResponse[]> {
+  getAreaVersions(workspaceId: string, areaId: string): Observable<AreaVersionResponse[]> {
     return this.http.get<AreaVersionResponse[]>(
-      `${this.base}/workspaces/${this.workspaceId}/areas/${areaId}/versions`,
+      `${this.base}/workspaces/${workspaceId}/areas/${areaId}/versions`,
     );
   }
 
-  getDeletedAreas(): Observable<DeletedArea[]> {
+  getDeletedAreas(workspaceId: string): Observable<DeletedArea[]> {
     return this.http.get<DeletedArea[]>(
-      `${this.base}/workspaces/${this.workspaceId}/areas/deleted`,
+      `${this.base}/workspaces/${workspaceId}/areas/deleted`,
     );
   }
 
-  permanentDeleteArea(areaId: string, expectedVersion: number): Observable<Area> {
+  permanentDeleteArea(workspaceId: string, areaId: string, expectedVersion: number): Observable<Area> {
     return this.http.delete<Area>(
-      `${this.base}/workspaces/${this.workspaceId}/areas/${areaId}/permanent`,
+      `${this.base}/workspaces/${workspaceId}/areas/${areaId}/permanent`,
       { params: { expectedVersion: expectedVersion.toString() } },
     );
   }
 
-  getAreas(bounds: L.LatLngBounds): Observable<Area[]> {
+  getAreas(workspaceId: string, bounds: L.LatLngBounds): Observable<Area[]> {
     const bbox = `${bounds.getWest()},${bounds.getSouth()},${bounds.getEast()},${bounds.getNorth()}`;
     return this.http.get<Area[]>(
-      `${this.base}/workspaces/${this.workspaceId}/areas`,
+      `${this.base}/workspaces/${workspaceId}/areas`,
       { params: { bbox } },
     );
   }

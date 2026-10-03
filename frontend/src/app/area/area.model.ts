@@ -35,10 +35,10 @@ export interface DeletedArea {
 }
 
 export interface AreaEventMessage {
-  type: 'AREA_CREATED' | 'AREA_UPDATED' | 'AREA_DELETED' | 'AREA_RESTORED' | 'AREA_PERMANENTLY_DELETED';
+  type: 'AREA_CREATED' | 'AREA_UPDATED' | 'AREA_DELETED' | 'AREA_RESTORED' | 'AREA_PERMANENTLY_DELETED' | 'WORKSPACE_DELETED';
   workspaceId: string;
   timestamp: string;
-  payload: Area;
+  payload?: Area;
 }
 
 export interface CreateAreaRequest {

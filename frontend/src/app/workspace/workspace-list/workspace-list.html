@@ -1,0 +1,54 @@
+<div class="ws-container">
+  <div class="ws-card">
+    <div class="ws-header">
+      <h1>Snapland GIS</h1>
+      <button class="logout-btn" (click)="logout()">Sign out</button>
+    </div>
+
+    <h2>Workspaces</h2>
+
+    <form class="create-form" (ngSubmit)="createWorkspace()">
+      <input
+        [ngModel]="newWorkspaceName()"
+        (ngModelChange)="newWorkspaceName.set($event)"
+        name="newWorkspaceName"
+        placeholder="New workspace name"
+        [disabled]="creating()"
+        class="create-input"
+      />
+      <button type="submit" [disabled]="creating() || !newWorkspaceName().trim()" class="btn btn-primary">
+        {{ creating() ? 'Creating…' : 'Create' }}
+      </button>
+    </form>
+
+    @if (createError()) {
+      <p class="error">{{ createError() }}</p>
+    }
+
+    @if (loading()) {
+      <p class="loading">Loading…</p>
+    } @else if (error()) {
+      <p class="error">{{ error() }}</p>
+    } @else if (workspaces().length === 0) {
+      <p class="empty">No workspaces yet. Create one above.</p>
+    } @else {
+      <ul class="ws-list">
+        @for (ws of workspaces(); track ws.id) {
+          <li class="ws-item">
+            <span class="ws-name">{{ ws.name }}</span>
+            <div class="ws-actions">
+              <button class="btn btn-open" (click)="openWorkspace(ws.id)">Open</button>
+              @if (ws.createdById === currentUserId) {
+                <button
+                  class="btn btn-delete"
+                  (click)="deleteWorkspace(ws)"
+                  [disabled]="deletingId() === ws.id"
+                >{{ deletingId() === ws.id ? 'Deleting…' : 'Delete' }}</button>
+              }
+            </div>
+          </li>
+        }
+      </ul>
+    }
+  </div>
+</div>

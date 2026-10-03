@@ -1,0 +1,1264 @@
+Task 21 — Workspace Selection & Management — Analysis and Implementation Plan
+
+Goal
+
+Replace the current single prototype-workspace flow with a simple MVP workspace selection flow.
+
+Important: this task is currently ANALYSIS ONLY.
+Do not modify production code, tests, migrations, frontend code, or documentation yet.
+
+First inspect the existing implementation and propose the smallest safe implementation plan.
+
+## Desired MVP behavior
+
+The application should work as follows:
+
+1. Authentication remains mandatory.
+2. After successful registration/login, the user goes to a workspace selection page instead of directly opening the prototype map.
+3. The workspace page displays all existing workspaces available in the application.
+4. Any authenticated user can open any existing workspace.
+5. Opening a workspace navigates to its map and the user starts working with that workspace.
+6. Any authenticated user can create a new workspace.
+7. A workspace can be deleted manually.
+8. There is NO invitation flow.
+9. There is NO join code.
+10. There is NO explicit "join workspace" action.
+11. There is NO private-workspace/access-control model in this MVP.
+12. Do not add unnecessary roles/permissions unless the existing implementation makes them unavoidable.
+
+Conceptually:
+
+Unauthenticated
+    ↓
+/auth
+    ↓
+Login / Register
+    ↓
+/workspaces
+    ↓
+List all workspaces
+    ├── Create Workspace
+    └── Open Workspace
+            ↓
+      /workspaces/{workspaceId}/map
+            ↓
+      existing Area / History / Presence / WebSocket functionality
+
+The workspace is simply the project/map context selected by the authenticated user.
+
+## Important current-state context
+
+The project currently has a prototype workspace model.
+
+Registration currently creates a User + WorkspaceMember association with the prototype workspace.
+
+Configuration contains:
+
+    app.prototype.workspace-id
+
+There is also existing WorkspaceMember functionality.
+
+Existing Area REST APIs are already workspace-scoped:
+
+    /workspaces/{workspaceId}/areas/...
+
+Presence is workspace-scoped.
+
+WebSocket events/topics may also depend on workspaceId.
+
+The current frontend map flow assumes the prototype workspace in some places.
+
+Do NOT assume WorkspaceMember can simply be deleted.
+
+## Analysis required
+
+Inspect the actual codebase and report the following.
+
+### 1. Current Workspace model
+
+Identify:
+
+- Workspace entity fields
+- WorkspaceRepository
+- WorkspaceService if present
+- WorkspaceMember entity/repository/service
+- relationships between User, WorkspaceMember, Workspace, Area
+- DB migrations that created these structures
+- constraints and foreign keys
+- cascade/delete behavior
+
+Show the relevant files.
+
+### 2. Prototype workspace coupling
+
+Find every production-code/configuration location that depends on:
+
+    app.prototype.workspace-id
+    PrototypeProperties
+    WorkspaceMember
+    prototype workspace
+    hard-coded workspace IDs
+
+Include both backend and frontend.
+
+For each occurrence explain why it currently exists.
+
+Do not count test fixtures unless they reveal an important architectural dependency; list test impact separately.
+
+### 3. Registration/login flow
+
+Trace the current flow:
+
+    POST /auth/register
+    POST /auth/login
+    Angular auth flow
+    redirect after authentication
+
+Explain exactly:
+
+- why registration currently creates WorkspaceMember
+- whether login depends on WorkspaceMember
+- where frontend redirects to /map
+- whether removing automatic prototype membership would break authentication or anything else
+
+### 4. Current workspace authorization
+
+Determine whether current REST endpoints verify:
+
+    authenticated user is a WorkspaceMember
+
+or whether workspaceId is currently only used as a data-scoping parameter.
+
+Check this for:
+
+- Area queries
+- Area mutations
+- Area history
+- deleted Areas
+- permanent delete
+- Presence
+- WebSocket CONNECT
+- WebSocket SUBSCRIBE
+- WebSocket event delivery
+
+This is important because the new MVP model intentionally allows any authenticated user to open any workspace.
+
+Do not introduce membership authorization if it does not serve the desired MVP.
+
+### 5. Presence behavior
+
+Analyze how PresenceService currently determines:
+
+    which workspace a connected user belongs to
+
+We need presence to mean:
+
+    users currently working in this workspace
+
+not:
+
+    users permanently assigned to this workspace
+
+Explain what needs to change, if anything, when the user selects a workspace dynamically.
+
+### 6. WebSocket behavior
+
+Trace how workspaceId is used in:
+
+- STOMP subscriptions
+- Area events
+- Presence events
+- reconnect logic
+
+Determine whether switching from a fixed prototype workspace to a selected workspace requires backend changes, frontend changes, or both.
+
+### 7. Workspace CRUD
+
+Determine the minimum backend API required for:
+
+    GET    /workspaces
+    POST   /workspaces
+    DELETE /workspaces/{workspaceId}
+
+Optionally:
+
+    GET /workspaces/{workspaceId}
+
+only if the frontend genuinely needs it.
+
+Propose concrete request/response contracts.
+
+Keep them minimal.
+
+For example, creation probably only needs:
+
+    {
+      "name": "Tel Aviv Project"
+    }
+
+Do not add description, settings, permissions, invitations, owner management, etc. unless already required by the existing model.
+
+### 8. Workspace deletion semantics
+
+This needs explicit analysis.
+
+A Workspace may contain:
+
+- Areas
+- AreaVersion history
+- Presence state
+- WorkspaceMember rows
+- possibly other dependent data
+
+Propose the simplest safe deletion semantics for this MVP.
+
+Determine whether deletion should:
+
+- cascade physically,
+- explicitly delete children in a transaction,
+- or be rejected while dependent data exists.
+
+We want a simple manual full-delete operation, but it must preserve DB consistency.
+
+Also explain what should happen to connected clients if their currently opened workspace is deleted.
+
+Do not implement yet.
+
+### 9. WorkspaceMember decision
+
+This is especially important.
+
+Based on actual code usage, recommend one of:
+
+A. Remove WorkspaceMember entirely.
+B. Keep it in the schema but stop using it for the current MVP flow.
+C. Keep using it for some specific reason.
+
+Explain the tradeoff.
+
+The desired MVP does NOT require membership-based access control, invitations, or private workspaces.
+
+Avoid keeping complexity merely because it already exists, but also avoid an unnecessary destructive migration if leaving the table unused is safer.
+
+### 10. Frontend flow
+
+Propose the minimum frontend changes.
+
+Desired routes:
+
+    /auth
+    /workspaces
+    /workspaces/:workspaceId/map
+
+Analyze the current routes and map component.
+
+Propose:
+
+- WorkspaceList component/page
+- Create Workspace UI
+- Open button/action
+- Delete action + confirmation
+- dynamic workspaceId from route
+- removal of fixed prototype workspace references
+- login/register redirect to /workspaces
+- logout behavior
+
+Keep UI simple and consistent with the existing application.
+
+### 11. Clean-start / dev initialization
+
+We just verified that the project starts successfully from a clean PostgreSQL volume.
+
+Analyze what should happen to DevDataInitializer / prototype workspace creation after this change.
+
+A clean installation must still work with:
+
+    docker compose up -d
+    backend start with dev profile
+    frontend start
+
+Decide whether:
+
+- no workspace should initially exist,
+- a demo workspace should be seeded in dev,
+- or the existing prototype workspace should remain only as dev sample data.
+
+Prefer the behavior that best demonstrates the real user flow:
+
+    register → workspace list → create workspace → open workspace
+
+### 12. Existing tests impact
+
+Identify which current tests will need modification because they assume:
+
+- prototype workspace
+- automatic WorkspaceMember creation
+- fixed workspace IDs
+- /map redirect
+- workspace membership
+
+Do not weaken existing Area, WebSocket, Presence, rate-limit, audit, metrics, or OCC coverage.
+
+### 13. Documentation impact
+
+List required changes to:
+
+- README.md
+- docs/DESIGN.md
+- docs/REQUIREMENTS.md if necessary
+- docs/TEST_CASES.md
+
+Do not modify them yet.
+
+## Scope constraints
+
+Do NOT introduce:
+
+- invitations
+- join codes
+- workspace discovery permissions
+- private/public workspaces
+- ADMIN role
+- complex RBAC
+- ownership transfer
+- member management
+- leave-workspace flow
+- workspace settings
+- pagination unless genuinely necessary
+- Redis-based workspace storage
+- caching
+- new external dependencies
+
+Authentication remains the existing MVP email-only authentication.
+
+Do not redesign unrelated Area functionality.
+
+Do not break existing realtime behavior.
+
+## Expected output
+
+Return an implementation report containing:
+
+1. Current-state architecture
+2. Exact prototype-workspace dependencies found
+3. Current WorkspaceMember usage
+4. Current authorization behavior
+5. Proposed final MVP workspace model
+6. Proposed REST API contracts
+7. Proposed frontend routes and flow
+8. Workspace deletion semantics
+9. Presence/WebSocket impact
+10. WorkspaceMember recommendation
+11. DB migration requirements
+12. Existing tests that must change
+13. New tests required
+14. Documentation changes
+15. Exact files expected to change
+16. Risks / edge cases
+17. Step-by-step implementation plan
+
+End with:
+
+    Recommended implementation scope
+
+listing only the changes you recommend actually implementing.
+
+Do not implement anything until the plan is reviewed and approved.
+
+
+
+---
+Task 21 — Workspace Selection & Management: Implementation Report
+
+---
+1. Current-State Architecture
+
+Workspace entity (workspace/Workspace.java)
+
+Fields: id UUID, name VARCHAR(255), createdBy User (FK lazy), createdAt Instant.
+Constructor: Workspace(String name, User createdBy).
+
+WorkspaceMember entity (workspace/WorkspaceMember.java)
+
+Fields: id UUID, workspace Workspace (FK lazy), user User (FK lazy), role WorkspaceMemberRole (OWNER | EDITOR | VIEWER).
+Unique constraint: (workspace_id, user_id).
+
+WorkspaceRepository / WorkspaceMemberRepository
+
+Both are plain JpaRepository<T, UUID> — no custom queries. No WorkspaceService exists.
+
+DB constraints (V2__core_schema.sql)
+
+fk_workspace_created_by  → users(id) ON DELETE RESTRICT
+fk_workspace_member_workspace → workspace(id)          [no CASCADE]
+fk_workspace_member_user      → users(id)               [no CASCADE]
+fk_area_workspace             → workspace(id)           [no CASCADE]
+fk_area_version_area          → area(id)                [no CASCADE]
+No ON DELETE CASCADE anywhere. Physical deletion of a workspace requires explicit child cleanup in the correct order: area_version → area → workspace_member → workspace.
+
+AreaService authorization
+
+workspaceId is validated by workspaceRepository.findById() (throws WorkspaceNotFoundException) and used as a WHERE clause scope in all SQL. No WorkspaceMember check exists anywhere in AreaService. Any authenticated user can read or mutate any workspace.
+
+---
+2. Prototype Workspace Dependencies — Complete Inventory
+
+Backend production code
+
+┌────────────────────────────┬──────────────────────────────────────────────────────────────────────────────────────────────┬─────────────────────────────────────────────────────────┐
+│          Location          │                                         What it does                                         │                           Why                           │
+├────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────┤
+│ PrototypeProperties.java   │ @ConfigurationProperties("app.prototype") — holds UUID workspaceId                           │ Config binding                                          │
+├────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────┤
+│ SecurityConfig.java:20     │ @EnableConfigurationProperties({JwtProperties.class, PrototypeProperties.class})             │ Activates bean in all profiles                          │
+├────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────┤
+│ AuthService.java:58–62     │ Loads prototype workspace by ID; creates WorkspaceMember(EDITOR) for every new user          │ Auto-joins every registrant to the one shared workspace │
+├────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────┤
+│ PresenceService.java:134   │ prototypeProperties.workspaceId().toString() hardcoded as broadcast topic                    │ All sessions implicitly in one workspace                │
+├────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────┤
+│ PresenceController.java:27 │ if (!prototypeProperties.workspaceId().equals(workspaceId)) throw WorkspaceNotFoundException │ Guards against any workspace other than the prototype   │
+├────────────────────────────┼──────────────────────────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────┤
+│ DevDataInitializer.java:38 │ Uses prototypeProperties.workspaceId() to seed dev workspace                                 │ Dev bootstrap                                           │
+└────────────────────────────┴──────────────────────────────────────────────────────────────────────────────────────────────┴─────────────────────────────────────────────────────────┘
+
+Configuration files
+
+┌─────────────────────┬──────────────────────────────────────────────────────────────────┬─────────────────────────────────────────────┐
+│        File         │                               Key                                │                    Notes                    │
+├─────────────────────┼──────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────┤
+│ application.yml     │ app.prototype.workspace-id: ${PROTOTYPE_WORKSPACE_ID}            │ Required env var in all non-dev deployments │
+├─────────────────────┼──────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────┤
+│ application-dev.yml │ app.prototype.workspace-id: 00000000-0000-0000-0000-000000000002 │ Fixed dev/test workspace UUID               │
+└─────────────────────┴──────────────────────────────────────────────────────────────────┴─────────────────────────────────────────────┘
+
+Frontend
+
+┌───────────────────────┬──────────────────────────────────────────────────────────────────────────────────┐
+│       Location        │                                   What it does                                   │
+├───────────────────────┼──────────────────────────────────────────────────────────────────────────────────┤
+│ environment.ts:4      │ workspaceId: '00000000-0000-0000-0000-000000000002' — hardcoded                  │
+├───────────────────────┼──────────────────────────────────────────────────────────────────────────────────┤
+│ environment.prod.ts:4 │ workspaceId: '' — empty string (production is broken without override)           │
+├───────────────────────┼──────────────────────────────────────────────────────────────────────────────────┤
+│ area.service.ts:11    │ private readonly workspaceId = environment.workspaceId — used in all 8 API calls │
+├───────────────────────┼──────────────────────────────────────────────────────────────────────────────────┤
+│ map.ts:511            │ environment.workspaceId passed to realtimeService.connect()                      │
+├───────────────────────┼──────────────────────────────────────────────────────────────────────────────────┤
+│ map.ts:528            │ environment.workspaceId passed to presenceService.getPresence()                  │
+└───────────────────────┴──────────────────────────────────────────────────────────────────────────────────┘
+
+---
+3. Registration / Login Flow
+
+POST /auth/register current flow
+
+1. Normalize email (trim + lowercase)
+2. Check uniqueness; throw UserAlreadyExistsException if duplicate
+3. userRepository.save(new User(name, email))
+4. workspaceRepository.findById(prototypeProperties.workspaceId()) — throws IllegalStateException if prototype workspace row is missing (hard dependency)
+5. workspaceMemberRepository.save(new WorkspaceMember(workspace, user, EDITOR))
+6. Issue JWT
+
+Why registration creates WorkspaceMember: The only workspace in the system was the prototype workspace. Auto-joining every user to it was the natural bootstrap for the single-workspace model.
+
+POST /auth/login current flow
+
+Loads user by email, issues JWT. No WorkspaceMember interaction whatsoever.
+
+Frontend after login/register (auth.ts:36)
+
+this.router.navigate(['/map']);
+Hardcoded to /map in both modes.
+
+Auth guard (auth.guard.ts)
+
+hasToken() check only — no workspace validation. Redirects to /auth if no token.
+
+Impact of removing WorkspaceMember creation from register
+
+- register() no longer throws IllegalStateException when prototype workspace is missing
+- workspaceRepository and workspaceMemberRepository can be removed from AuthService
+- login() is completely unaffected
+- No existing feature depends on the WorkspaceMember entry created at registration — AreaService has no membership check
+
+---
+4. Current Workspace Authorization
+
+┌─────────────────────────────────────────────────────────┬─────────────────────────────────────┬─────────────────────────────────────────────────────────────────────┐
+│                        Endpoint                         │       WorkspaceMember check?        │                              Behavior                               │
+├─────────────────────────────────────────────────────────┼─────────────────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+│ GET /workspaces/{wid}/areas?bbox=                       │ None                                │ Validates workspace exists; scopes query by workspace_id            │
+├─────────────────────────────────────────────────────────┼─────────────────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+│ POST /workspaces/{wid}/areas                            │ None                                │ Validates workspace exists                                          │
+├─────────────────────────────────────────────────────────┼─────────────────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+│ PUT /workspaces/{wid}/areas/{aid}                       │ None                                │ Validates workspace exists                                          │
+├─────────────────────────────────────────────────────────┼─────────────────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+│ DELETE /workspaces/{wid}/areas/{aid}                    │ None                                │ Validates workspace exists                                          │
+├─────────────────────────────────────────────────────────┼─────────────────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+│ GET /workspaces/{wid}/areas/{aid}/versions              │ None                                │ Validates workspace exists; cross-workspace 404                     │
+├─────────────────────────────────────────────────────────┼─────────────────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+│ GET /workspaces/{wid}/areas/deleted                     │ None                                │ Validates workspace exists                                          │
+├─────────────────────────────────────────────────────────┼─────────────────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+│ DELETE /workspaces/{wid}/areas/{aid}/permanent          │ None                                │ Validates workspace exists                                          │
+├─────────────────────────────────────────────────────────┼─────────────────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+│ POST /workspaces/{wid}/areas/{aid}/versions/{v}/restore │ None                                │ Validates workspace exists                                          │
+├─────────────────────────────────────────────────────────┼─────────────────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+│ GET /workspaces/{wid}/presence                          │ YES — but against prototype ID only │ Rejects any workspace ≠ prototype ID                                │
+├─────────────────────────────────────────────────────────┼─────────────────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+│ WebSocket CONNECT                                       │ JWT auth only                       │ No workspace check                                                  │
+├─────────────────────────────────────────────────────────┼─────────────────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+│ WebSocket SUBSCRIBE                                     │ None                                │ Clients self-subscribe to any topic                                 │
+├─────────────────────────────────────────────────────────┼─────────────────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+│ Area event delivery                                     │ N/A                                 │ Routes to /topic/workspace/{areaWorkspaceId} — already correct      │
+├─────────────────────────────────────────────────────────┼─────────────────────────────────────┼─────────────────────────────────────────────────────────────────────┤
+│ Presence event delivery                                 │ N/A                                 │ Routes to /topic/workspace/{prototypeId}/presence — hardcoded wrong │
+└─────────────────────────────────────────────────────────┴─────────────────────────────────────┴─────────────────────────────────────────────────────────────────────┘
+
+Conclusion: The MVP desired behavior ("any authenticated user can open any workspace") is already implemented for all Area endpoints. The only places that actively restrict to the prototype workspace are PresenceController and PresenceService.
+
+---
+5. Presence — Current Design and Required Changes
+
+Current design
+
+PresenceService maintains three ConcurrentHashMaps:
+- userSessions — userId → Set of sessionIds (all users, all workspaces)
+- sessionToUser — sessionId → userId
+- userNames — userId → display name
+
+getActiveUsers() returns all globally connected users, regardless of which workspace they are in.
+
+broadcast() always sends to /topic/workspace/{prototypeId}/presence — hardcoded.
+
+PresenceController.getPresence() rejects any workspaceId ≠ prototype, so callers can never get presence for a different workspace.
+
+What must change
+
+Problem: Presence must be per-workspace. Users in workspace A must not appear in workspace B's presence list.
+
+Solution: Track workspaceId per session.
+
+1. Frontend: Pass workspace-id in the STOMP CONNECT headers (alongside Authorization: Bearer).
+2. JwtChannelInterceptor: Extract workspace-id from native CONNECT headers; store it in accessor.getSessionAttributes().put("workspaceId", workspaceId). Handle missing/invalid gracefully (log, reject connect or use null).
+3. PresenceService.onSessionConnected(): Read workspaceId from StompHeaderAccessor.wrap(event.getMessage()).getSessionAttributes(). Store in a new sessionToWorkspace: ConcurrentHashMap<String, String>.
+4. PresenceService.broadcast(): Use sessionToWorkspace.get(sessionId) to determine the workspace topic.
+5. PresenceService.getActiveUsers(UUID workspaceId): Filter userSessions to users whose sessions include at least one in the given workspace.
+6. PresenceController.getPresence(): Remove prototype guard; validate workspace exists in DB; call presenceService.getActiveUsers(workspaceId).
+
+---
+6. WebSocket — Impact Analysis
+
+Area events (AreaEventRelay)
+
+messagingTemplate.convertAndSend("/topic/workspace/" + event.workspaceId(), event) — already uses the area's own workspace ID. No change needed.
+
+Presence events (PresenceService.broadcast())
+
+Currently hardcoded to prototype workspace. Must use per-session workspaceId as described in §5.
+
+STOMP subscriptions (realtime.service.ts)
+
+Currently:
+realtimeService.connect(environment.workspaceId, ...)
+Must become the dynamic route param:
+realtimeService.connect(this.workspaceId, ...)  // workspaceId from ActivatedRoute
+RealtimeService.connect() already accepts workspaceId as a parameter — the signature does not change. Only the caller changes.
+
+Reconnect (realtime.service.ts)
+
+On reconnect, re-subscribes to the same workspaceId passed to connect(). Once the caller passes the route param correctly, reconnect works correctly automatically.
+
+Backend: No STOMP infrastructure changes required beyond JwtChannelInterceptor and PresenceService.
+
+---
+7. Proposed Workspace REST API
+
+Endpoints
+
+GET    /workspaces              → List<WorkspaceResponse>         200
+POST   /workspaces              → WorkspaceResponse               201
+DELETE /workspaces/{workspaceId} → (empty body)                   204
+
+No GET /workspaces/{workspaceId} for now — the map component receives the ID from the route and doesn't need a separate fetch.
+
+Request / Response contracts
+
+// CreateWorkspaceRequest.java
+public record CreateWorkspaceRequest(
+    @NotBlank(message = "Name is required.")
+    @Size(max = 255, message = "Name must not exceed 255 characters.")
+    String name
+) {}
+
+// WorkspaceResponse.java
+public record WorkspaceResponse(UUID id, String name, UUID createdById, Instant createdAt) {}
+
+GET /workspaces returns all workspaces ordered by created_at DESC.
+
+DELETE /workspaces/{id} returns 404 if workspace not found, 204 on success.
+
+---
+8. Workspace Deletion Semantics
+
+Dependent data (all without CASCADE)
+
+1. area_version rows (FK → area.id)
+2. area rows (FK → workspace.id)
+3. workspace_member rows (FK → workspace.id)
+4. In-memory presence state (ephemeral, no DB)
+
+Proposed approach: explicit cascade in a @Transactional service method
+
+DELETE FROM area_version WHERE area_id IN (SELECT id FROM area WHERE workspace_id = :id)
+DELETE FROM area           WHERE workspace_id = :id
+DELETE FROM workspace_member WHERE workspace_id = :id
+DELETE FROM workspace      WHERE id = :id
+
+All within one transaction. If the workspace doesn't exist, throw WorkspaceNotFoundException (404).
+
+Justification: No new migration needed. The constraint order is deterministic. Native SQL via JdbcTemplate is the most direct approach (same pattern used in permanentDeleteArea).
+
+Connected clients when their workspace is deleted
+
+Before executing the physical delete, broadcast a WORKSPACE_DELETED WebSocket event to /topic/workspace/{id}. The frontend handles this event by navigating to /workspaces. This prevents the map user from being stuck on a 404-returning workspace without knowing why.
+
+The WORKSPACE_DELETED event payload needs only the workspaceId (no area payload). A new event record or a separate broadcast call is sufficient.
+
+After the broadcast, the physical delete proceeds. Subsequent REST calls by lingering clients return 404 — the frontend 404 handler on workspace-scoped calls also redirects to /workspaces as a fallback.
+
+---
+9. WorkspaceMember Recommendation
+
+Recommendation: Option B — keep the table in the schema, stop creating entries from register(). Create one OWNER entry when a workspace is created.
+
+Rationale:
+- Removing the table requires a Flyway migration (V3), JPA entity deletion, and changes to SchemaIntegrationTest.basicEntityCrudRoundTrip() and uniqueWorkspaceMemberConstraintEnforced(). This is purely destructive and adds risk.
+- The table is structurally correct, already constrained, and imposes zero runtime cost.
+- Creating a WorkspaceMember(OWNER) entry when a workspace is created is natural and sets up the data model correctly for any future membership feature.
+- No membership check is added to Area operations — this is consistent with the MVP goal ("any authenticated user can open any workspace").
+
+The AuthService.register() change: remove WorkspaceMember creation entirely. WorkspaceMember is only created in WorkspaceService.createWorkspace().
+
+---
+10. Frontend Routes and Flow
+
+Current routes
+
+''     → /map
+/auth  → AuthComponent
+/map   → MapComponent (authGuard)
+
+Proposed routes
+
+''                                 → /workspaces
+/auth                              → AuthComponent
+/workspaces                        → WorkspaceListComponent (authGuard)
+/workspaces/:workspaceId/map       → MapComponent (authGuard)
+
+WorkspaceListComponent (new)
+
+- Loads all workspaces via GET /workspaces on init
+- Inline "Create Workspace" section: name input + Create button → POST /workspaces → refresh list
+- Each row: workspace name, created date, "Open" button → router.navigate(['/workspaces', id, 'map'])
+- Each row: "Delete" button → confirm() → DELETE /workspaces/{id} → remove from list
+- Handles WORKSPACE_DELETED WS event? Not needed here since the user is on the list page, not the map. Simple reload on error is sufficient.
+
+AuthComponent change
+
+Line 37: this.router.navigate(['/map']) → this.router.navigate(['/workspaces'])
+
+MapComponent changes
+
+- Inject ActivatedRoute
+- Read workspaceId = this.route.snapshot.paramMap.get('workspaceId') in ngAfterViewInit
+- Replace all environment.workspaceId references in map.ts with this.workspaceId
+- Handle WORKSPACE_DELETED realtime event → this.router.navigate(['/workspaces'])
+- Handle 404 responses on workspace-scoped REST calls → navigate to /workspaces
+
+AreaService changes
+
+Remove private readonly workspaceId = environment.workspaceId.
+Add workspaceId: string as first parameter to all 8 public methods.
+All URL templates use the passed parameter instead.
+
+Environment files
+
+Remove workspaceId field from both environment.ts and environment.prod.ts.
+
+Logout
+
+Currently navigates to /auth. No change needed.
+
+---
+11. Clean-Start / Dev Initialization
+
+Current: DevDataInitializer seeds dev user + prototype workspace + WorkspaceMember on dev profile startup.
+
+After the change:
+
+DevDataInitializer seeds the dev user only (no workspace). DevTokenController still works — it issues a token for the dev user. On first startup with a fresh DB:
+
+register (or use /dev/token) → /workspaces (empty) → Create Workspace → Open Map
+
+This demonstrates the real user flow. The dev workspace UUID in application-dev.yml can be retained to support TestDataInitializer without change (see §12), but DevDataInitializer stops using it.
+
+DevDataInitializer.java will no longer import PrototypeProperties. Its only job is seeding the dev user row.
+
+---
+12. Existing Tests That Must Change
+
+Must change (behavioral contract changes)
+
+┌────────────────────────────────────────────────────────────────────────┬─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                                  Test                                  │                                                          Change needed                                                          │
+├────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ AuthIntegrationTest.register_createsWorkspaceMembership()              │ Remove or invert: after the change, registration does NOT create WorkspaceMember. Replace with: "register does not create       │
+│ (TC-AUTH-REG-005)                                                      │ WorkspaceMember."                                                                                                               │
+├────────────────────────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ AuthIntegrationTest.cleanUsers() @BeforeEach                           │ The DELETE FROM workspace_member WHERE user_id NOT IN (...) still works; no change needed but can be simplified since no        │
+│                                                                        │ registration-triggered members exist.                                                                                           │
+└────────────────────────────────────────────────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+No change needed (use PrototypeProperties only to get the seeded workspace ID)
+
+All of the following @Autowired PrototypeProperties tests simply use the prototype workspace ID to build URLs for the seeded workspace. TestDataInitializer continues to seed that workspace with the same ID. These tests continue to pass without modification:
+
+AreaApiIntegrationTest, AreaAuditIntegrationTest, AreaDeleteRestoreIntegrationTest, AreaUpdateIntegrationTest, AreaVersionHistoryIntegrationTest, AreaWebSocketIntegrationTest, AreaWebSocketAuthIntegrationTest, DeletedAreasIntegrationTest, DrawingRateLimitIntegrationTest, MetricsIntegrationTest, PermanentDeleteIntegrationTest, PresenceIntegrationTest.
+
+However: if PresenceService.getActiveUsers() changes signature to getActiveUsers(UUID workspaceId), PresenceIntegrationTest needs corresponding updates — the REST snapshot call GET /workspaces/{workspaceId}/presence now scopes correctly. Tests TC-PRESENCE-003 through TC-PRESENCE-009 use the seeded workspace ID. As long as TestDataInitializer still seeds that workspace, the tests are valid.
+
+PresenceIntegrationTest.TC-PRESENCE-002 ("Unknown workspaceId → 404 WORKSPACE_NOT_FOUND") continues to pass because the new PresenceController validates workspace existence in the DB.
+
+Must change (presence per-workspace scoping)
+
+PresenceIntegrationTest TC-PRESENCE-004 and TC-PRESENCE-005 verify that a STOMP connect causes a PRESENCE_JOINED event. After the change, the STOMP client must send workspace-id in CONNECT headers. The test's STOMP connect setup must add this header. This is a small but required test change.
+
+SchemaIntegrationTest — no change needed; it tests the schema independently.
+
+TestDataInitializer / TestConfig — no change needed if PrototypeProperties remains accessible in the test profile (it does, via TestConfig).
+
+---
+13. New Tests Required
+
+WorkspaceIntegrationTest (new file):
+
+┌───────────┬─────────────────────────────────────────────────────────────────────────┐
+│    ID     │                               Description                               │
+├───────────┼─────────────────────────────────────────────────────────────────────────┤
+│ TC-WS-001 │ GET /workspaces — authenticated → 200 with workspace list               │
+├───────────┼─────────────────────────────────────────────────────────────────────────┤
+│ TC-WS-002 │ GET /workspaces — unauthenticated → 401                                 │
+├───────────┼─────────────────────────────────────────────────────────────────────────┤
+│ TC-WS-003 │ POST /workspaces with valid name → 201 with id/name/createdAt           │
+├───────────┼─────────────────────────────────────────────────────────────────────────┤
+│ TC-WS-004 │ POST /workspaces with blank name → 400                                  │
+├───────────┼─────────────────────────────────────────────────────────────────────────┤
+│ TC-WS-005 │ POST /workspaces → workspace appears in GET /workspaces                 │
+├───────────┼─────────────────────────────────────────────────────────────────────────┤
+│ TC-WS-006 │ DELETE /workspaces/{id} → 204; workspace absent from list; areas purged │
+├───────────┼─────────────────────────────────────────────────────────────────────────┤
+│ TC-WS-007 │ DELETE /workspaces/{id} with areas — cascade deletes areas and versions │
+├───────────┼─────────────────────────────────────────────────────────────────────────┤
+│ TC-WS-008 │ DELETE /workspaces/{unknown} → 404                                      │
+├───────────┼─────────────────────────────────────────────────────────────────────────┤
+│ TC-WS-009 │ DELETE /workspaces/{id} unauthenticated → 401                           │
+├───────────┼─────────────────────────────────────────────────────────────────────────┤
+│ TC-WS-010 │ POST /workspaces creates WorkspaceMember(OWNER) for creator             │
+└───────────┴─────────────────────────────────────────────────────────────────────────┘
+
+Updated AuthIntegrationTest:
+- TC-AUTH-REG-005: replace "creates WorkspaceMember" with "does NOT create WorkspaceMember on registration"
+
+---
+14. Documentation Changes Required
+
+┌──────────────────────┬────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│       Document       │                                                                                       Change                                                                                       │
+├──────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ README.md            │ Remove "Prototype registration and login" row; add "Workspace selection and creation" feature; add workspace endpoints to API table; remove PROTOTYPE_WORKSPACE_ID env var from    │
+│                      │ configuration; update test count; update "Known Limitations" (membership not enforced — intentional MVP)                                                                           │
+├──────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ docs/DESIGN.md       │ Replace prototype workspace model section; describe workspace selection flow; update auth flow; update presence design (per-workspace scoping); update API section                 │
+├──────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ docs/TEST_CASES.md   │ Add TC-WS-001–010; update TC-AUTH-REG-005; update TC-PRESENCE-004/005 (workspace-id in CONNECT headers)                                                                            │
+├──────────────────────┼────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ docs/REQUIREMENTS.md │ Verify whether requirements already describe workspace management; update if they describe prototype-only behavior                                                                 │
+└──────────────────────┴────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+---
+15. Exact Files Expected to Change
+
+Backend — modified
+
+src/main/java/…/auth/AuthService.java
+src/main/java/…/config/SecurityConfig.java          (remove PrototypeProperties from EnableConfigurationProperties)
+src/main/java/…/config/PrototypeProperties.java     (move to dev scope OR keep as dev-only)
+src/main/java/…/dev/DevDataInitializer.java         (remove PrototypeProperties; seed user only)
+src/main/java/…/dev/DevConfig.java                  (enable PrototypeProperties here instead of SecurityConfig)
+src/main/java/…/realtime/PresenceService.java       (per-workspace session tracking)
+src/main/java/…/realtime/PresenceController.java    (remove prototype guard; validate workspace exists)
+src/main/java/…/realtime/JwtChannelInterceptor.java (extract workspace-id from CONNECT headers)
+src/main/resources/application.yml                  (remove app.prototype.workspace-id)
+src/test/java/…/TestDataInitializer.java            (no change if PrototypeProperties still in test scope)
+src/test/java/…/PresenceIntegrationTest.java        (add workspace-id to STOMP CONNECT headers)
+src/test/java/…/AuthIntegrationTest.java            (update TC-AUTH-REG-005)
+
+Backend — new
+
+src/main/java/…/workspace/WorkspaceService.java
+src/main/java/…/workspace/WorkspaceController.java
+src/main/java/…/workspace/dto/WorkspaceResponse.java
+src/main/java/…/workspace/dto/CreateWorkspaceRequest.java
+src/test/java/…/WorkspaceIntegrationTest.java
+
+Frontend — modified
+
+src/app/app.routes.ts
+src/app/auth/auth.ts                    (redirect to /workspaces)
+src/app/area/area.service.ts            (remove static workspaceId; add param)
+src/app/map/map.ts                      (inject ActivatedRoute; use route param)
+src/environments/environment.ts         (remove workspaceId)
+src/environments/environment.prod.ts    (remove workspaceId)
+
+Frontend — new
+
+src/app/workspace/workspace.model.ts
+src/app/workspace/workspace.service.ts
+src/app/workspace/workspace-list/workspace-list.ts
+src/app/workspace/workspace-list/workspace-list.html
+src/app/workspace/workspace-list/workspace-list.css
+
+Documentation — modified
+
+README.md
+docs/DESIGN.md
+docs/TEST_CASES.md
+docs/REQUIREMENTS.md   (verify and update if needed)
+
+---
+16. Risks and Edge Cases
+
+R1 — STOMP workspace-id header missing: If the frontend sends a CONNECT without workspace-id (e.g., an old client), PresenceService has no workspace context. Handling: log a warning, skip presence tracking for that session (don't crash). Presence gracefully degrades — the user is just not visible.
+
+R2 — Concurrent workspace deletion: User A is on the map for workspace W while User B deletes W from the workspace list. User A's next REST call returns 404. The MapComponent must handle 404 on workspace-scoped calls gracefully (navigate to /workspaces). The WORKSPACE_DELETED WebSocket broadcast provides the proactive signal.
+
+R3 — AreaService interface change ripple: AreaService's 8 public methods all gain a workspaceId parameter. All 12+ area-focused test classes call these methods indirectly via HTTP, not directly — so no test code changes. The AreaController already has workspaceId from @PathVariable — no change. The frontend AreaService needs all callers updated; map.ts is the only caller — this is a contained change.
+
+R4 — Presence scoping regression in tests: PresenceIntegrationTest TC-PRESENCE-004/005 connect STOMP without workspace-id header (current code). Once the interceptor starts reading the header, these tests will have null workspaceId → silent presence skip → events won't fire on the workspace topic → tests may fail. The tests must be updated to send workspace-id in the STOMP CONNECT headers.
+
+R5 — PROTOTYPE_WORKSPACE_ID env var removal: Production deployment environments (CI/CD, docker-compose.yml) that set PROTOTYPE_WORKSPACE_ID must remove it. If left set, it's harmless (unused), but documentation should note the change.
+
+R6 — PrototypeProperties scope: Moving @EnableConfigurationProperties(PrototypeProperties.class) from SecurityConfig to DevConfig means it's only active in the dev profile. Tests use TestConfig which explicitly enables it, so tests are unaffected. Production context no longer has this bean — AuthService (which no longer uses it) and all production code are clean.
+
+R7 — Performance seed workspace: The performance workspace (e0000000-…-0001) is inserted directly via SQL, bypassing the API. It will coexist with the new workspace management flow. No conflict.
+
+R8 — Dev user without initial workspace: After DevDataInitializer stops seeding a workspace, the dev user starts with zero workspaces. DevTokenController still works. The first dev session must create a workspace manually or via the UI. This is the intended behavior.
+
+---
+17. Step-by-Step Implementation Plan
+
+Step 1 — Backend: Workspace CRUD endpoints
+- New: WorkspaceResponse.java, CreateWorkspaceRequest.java
+- New: WorkspaceService.java — findAll(), createWorkspace(name, userId), deleteWorkspace(workspaceId)
+  - createWorkspace: save Workspace + WorkspaceMember(OWNER); return WorkspaceResponse
+  - deleteWorkspace: validate exists; native SQL cascade (area_version → area → workspace_member → workspace); broadcast WORKSPACE_DELETED via eventPublisher before delete
+- New: WorkspaceController.java — GET /workspaces, POST /workspaces, DELETE /workspaces/{id}
+- No new exception type needed (WorkspaceNotFoundException already exists)
+
+Step 2 — Backend: Decouple AuthService from prototype workspace
+- Remove PrototypeProperties, WorkspaceRepository, WorkspaceMemberRepository dependencies
+- register(): delete the workspace lookup + WorkspaceMember creation; keep User save + JWT issue
+
+Step 3 — Backend: Fix PresenceService for per-workspace scoping
+- Add sessionToWorkspace: ConcurrentHashMap<String, String> (sessionId → workspaceId string)
+- Update JwtChannelInterceptor.preSend(): read workspace-id native header from CONNECT frame; store in accessor.getSessionAttributes().put("workspaceId", wid) (null-safe)
+- Update PresenceService.onSessionConnected(): read workspaceId from session attributes; store in sessionToWorkspace
+- Update PresenceService.onSessionDisconnect(): remove from sessionToWorkspace
+- Update PresenceService.broadcast(): use sessionToWorkspace.get(sessionId) for the topic; skip broadcast if null
+- Change getActiveUsers() → getActiveUsers(String workspaceId): filter to users who have at least one session in the given workspace
+- Update PresenceController.getPresence(): remove prototype guard; call workspaceRepository.findById() to validate; call presenceService.getActiveUsers(workspaceId.toString())
+
+Step 4 — Backend: Config and DevDataInitializer cleanup
+- Move @EnableConfigurationProperties(PrototypeProperties.class) from SecurityConfig to DevConfig (PrototypeProperties used only in dev/test)
+- Remove app.prototype.workspace-id: ${PROTOTYPE_WORKSPACE_ID} from application.yml
+- Update DevDataInitializer: remove PrototypeProperties dependency; seed only the dev user row
+
+Step 5 — Backend: WORKSPACE_DELETED event type
+- Add a simple WorkspaceEventMessage record or reuse a minimal event that AreaEventRelay can relay; OR add a separate event relay for workspace events
+- The frontend needs to receive {type: "WORKSPACE_DELETED", workspaceId: "..."} on /topic/workspace/{id}
+
+Step 6 — Backend: Tests
+- Update AuthIntegrationTest TC-AUTH-REG-005: verify no WorkspaceMember created on register
+- Update PresenceIntegrationTest: add workspace-id header to all STOMP CONNECT calls
+- New WorkspaceIntegrationTest (TC-WS-001 through TC-WS-010)
+
+Step 7 — Frontend: WorkspaceListComponent
+- New workspace.model.ts — Workspace { id, name, createdAt }
+- New workspace.service.ts — getWorkspaces(), createWorkspace(name), deleteWorkspace(id)
+- New workspace-list.ts / .html / .css — list + create form + open + delete with confirm
+
+Step 8 — Frontend: Routes
+- app.routes.ts: '' → /workspaces; add /workspaces route; change /map to /workspaces/:workspaceId/map
+- Auth guard applied to both /workspaces and /workspaces/:workspaceId/map
+
+Step 9 — Frontend: MapComponent
+- Inject ActivatedRoute; read workspaceId from route.snapshot.paramMap.get('workspaceId')
+- Replace all environment.workspaceId with this.workspaceId
+- Handle WORKSPACE_DELETED in handleRealtimeEvent() → this.router.navigate(['/workspaces'])
+- Add STOMP CONNECT header: this.client!.connectHeaders = { Authorization: ..., 'workspace-id': this.workspaceId }
+
+Step 10 — Frontend: AreaService
+- Remove private readonly workspaceId = environment.workspaceId
+- Add workspaceId: string first parameter to all 8 public methods
+- Update all URL templates to use the passed parameter
+- Update all callsites in map.ts to pass this.workspaceId
+
+Step 11 — Frontend: AuthComponent and environment files
+- auth.ts:37: ['/map'] → ['/workspaces']
+- Remove workspaceId field from both environment files
+
+Step 12 — Documentation
+- README.md, docs/DESIGN.md, docs/TEST_CASES.md, docs/REQUIREMENTS.md
+- Run existing test suite; verify 146+ tests pass; run frontend build
+
+---
+Recommended Implementation Scope
+
+The following changes are recommended for actual implementation:
+
+Backend:
+1. WorkspaceResponse, CreateWorkspaceRequest DTOs
+2. WorkspaceService — findAll, createWorkspace, deleteWorkspace (cascade + WORKSPACE_DELETED broadcast)
+3. WorkspaceController — GET /workspaces, POST /workspaces, DELETE /workspaces/{id}
+4. AuthService — remove WorkspaceMember creation on register
+5. JwtChannelInterceptor — extract and store workspace-id from CONNECT headers
+6. PresenceService — per-workspace session tracking; getActiveUsers(String workspaceId)
+7. PresenceController — remove prototype guard; validate workspace; call getActiveUsers(workspaceId)
+8. DevDataInitializer — seed user only
+9. SecurityConfig / DevConfig — move PrototypeProperties to dev scope
+10. application.yml — remove app.prototype.workspace-id required env var
+11. AuthIntegrationTest — update TC-AUTH-REG-005
+12. PresenceIntegrationTest — add workspace-id STOMP header
+13. WorkspaceIntegrationTest — 10 new tests
+
+Frontend:
+1. workspace.model.ts, workspace.service.ts
+2. WorkspaceListComponent (ts + html + css)
+3. app.routes.ts — new route structure
+4. auth.ts — redirect to /workspaces
+5. area.service.ts — workspaceId as parameter
+6. map.ts — ActivatedRoute; WORKSPACE_DELETED handling; workspace-id in STOMP CONNECT
+7. environment.ts / environment.prod.ts — remove workspaceId
+
+Documentation:
+README.md, docs/DESIGN.md, docs/TEST_CASES.md
+
+Not in scope:
+- Workspace membership authorization for area operations
+- Private/public workspace toggle
+- Invitation or join flow
+- Pagination on workspace list (assuming ≤ tens of workspaces for MVP)
+- GET /workspaces/{workspaceId} single-workspace endpoint (not needed by frontend)
+- Workspace rename endpoint
+
+
+Task 21 — Workspace Selection & Management — Plan Corrections and Implementation Approval
+
+The analysis is approved with the corrections below.
+
+Implement Task 21 according to your proposed plan, except for the following changes.
+
+## Correction 1 — WorkspaceMember
+
+Do NOT create WorkspaceMember when a workspace is created.
+
+For this MVP, WorkspaceMember has no functional role.
+
+The access model is intentionally simple:
+
+- Any authenticated user can list all workspaces.
+- Any authenticated user can open any workspace.
+- Any authenticated user can read and mutate Areas in any workspace.
+- There is no join operation.
+- There are no invitations.
+- There is no membership-based authorization.
+- There is no RBAC.
+
+Workspace.createdBy already identifies the creator.
+
+Therefore:
+
+- Remove automatic WorkspaceMember creation from AuthService.register().
+- Do not create WorkspaceMember(OWNER) in WorkspaceService.createWorkspace().
+- Do not use WorkspaceMember for authorization.
+- Keep the existing WorkspaceMember table/entity/schema for now to avoid an unnecessary destructive migration.
+- Do not add a migration to remove it in this task.
+
+The table may remain unused.
+
+## Correction 2 — Workspace deletion authorization
+
+A workspace may be deleted only by its creator.
+
+Use the existing:
+
+    Workspace.createdBy
+
+Do not introduce OWNER/MEMBER roles for this.
+
+DELETE /workspaces/{workspaceId}
+
+Rules:
+
+- unauthenticated → 401
+- workspace does not exist → 404
+- authenticated user is not workspace.createdBy → 403
+- creator → 204 and full physical deletion
+
+The frontend should show the Delete action only when:
+
+    workspace.createdById === currentUser.id
+
+Backend authorization must still enforce this independently of the UI.
+
+Use an appropriate explicit error code for the 403 response, consistent with the project's existing error contract.
+
+Add tests for both allowed and forbidden deletion.
+
+## Correction 3 — Workspace response
+
+Keep:
+
+    WorkspaceResponse(
+        UUID id,
+        String name,
+        UUID createdById,
+        Instant createdAt
+    )
+
+The frontend needs createdById to determine whether to display the Delete action.
+
+Do not add roles or membership information.
+
+## Correction 4 — Workspace deletion semantics
+
+Keep the proposed explicit transactional cleanup:
+
+    area_version
+        ↓
+    area
+        ↓
+    workspace_member
+        ↓
+    workspace
+
+WorkspaceMember rows may exist from old/dev/test data, so deletion must still clean them up even though the new application flow no longer creates them.
+
+Keep WORKSPACE_DELETED realtime notification.
+
+Connected clients currently working in a deleted workspace should navigate to:
+
+    /workspaces
+
+Also retain REST 404 handling as a fallback.
+
+## Correction 5 — Presence
+
+Implement presence as workspace-scoped session state.
+
+The meaning of presence is:
+
+    "users who currently have this workspace open"
+
+It is NOT permanent workspace membership.
+
+The proposed approach using workspace-id in the STOMP CONNECT headers is approved.
+
+A WebSocket session should therefore be associated with:
+
+    sessionId
+    userId
+    workspaceId
+
+Presence REST:
+
+    GET /workspaces/{workspaceId}/presence
+
+must return only users with at least one active WebSocket session for that workspace.
+
+Multiple browser tabs/sessions for the same user must still result in one user in the presence list.
+
+Do not use WorkspaceMember for presence.
+
+## Correction 6 — Clean-start behavior
+
+Do not seed a default/prototype workspace in the dev profile.
+
+A clean database should produce this real application flow:
+
+    Start application
+        ↓
+    Register / Login
+        ↓
+    /workspaces
+        ↓
+    empty workspace list
+        ↓
+    Create Workspace
+        ↓
+    Open Workspace
+        ↓
+    Map
+
+DevDataInitializer may keep the dev user if required by /dev/token, but it must not create a workspace or membership.
+
+Remove the production dependency on:
+
+    PROTOTYPE_WORKSPACE_ID
+
+PrototypeProperties may remain only where tests require the fixed seeded test workspace. Do not keep prototype-workspace configuration in normal production runtime merely for tests.
+
+## Final routes
+
+Use:
+
+    /auth
+    /workspaces
+    /workspaces/:workspaceId/map
+
+Root:
+
+    /
+
+should redirect to:
+
+    /workspaces
+
+when authenticated through the existing auth guard behavior.
+
+Successful login/register:
+
+    → /workspaces
+
+Logout:
+
+    → /auth
+
+Remove the static frontend environment.workspaceId dependency.
+
+## Workspace API
+
+Implement:
+
+    GET /workspaces
+    POST /workspaces
+    DELETE /workspaces/{workspaceId}
+
+POST request:
+
+    {
+      "name": "Tel Aviv Project"
+    }
+
+Response:
+
+    {
+      "id": "...",
+      "name": "Tel Aviv Project",
+      "createdById": "...",
+      "createdAt": "..."
+    }
+
+GET returns all workspaces.
+
+No pagination is required for the MVP.
+
+Do not implement GET /workspaces/{id} unless the implementation proves it is genuinely necessary.
+
+## Tests
+
+Keep all existing relevant coverage.
+
+Add/update tests for at least:
+
+- authenticated workspace listing
+- unauthenticated listing rejected
+- workspace creation
+- blank workspace name rejected
+- created workspace appears in list
+- registration does NOT create WorkspaceMember
+- workspace creation does NOT create WorkspaceMember
+- creator can delete workspace
+- non-creator receives 403 when deleting workspace
+- workspace deletion removes Areas
+- workspace deletion removes AreaVersions
+- workspace deletion cleans any legacy WorkspaceMember rows
+- unknown workspace delete → 404
+- unauthenticated delete → 401
+- presence is isolated between two workspaces
+- same user with multiple sessions in one workspace appears once
+- users in different workspaces do not see each other
+- WORKSPACE_DELETED reaches a connected client of that workspace
+- existing Area realtime behavior continues to work with dynamic workspaceId
+
+Do not weaken existing OCC, audit, rate-limit, metrics, WebSocket auth, reconnect, Area history, delete/restore, or permanent-delete tests.
+
+## Documentation
+
+Update:
+
+- README.md
+- docs/DESIGN.md
+- docs/TEST_CASES.md
+
+Inspect docs/REQUIREMENTS.md and modify it only if the current text is inconsistent with the implemented workspace behavior.
+
+The documentation must explicitly state the MVP access model:
+
+    All authenticated users can see and work with all workspaces.
+    Workspace deletion is restricted to the workspace creator.
+    WorkspaceMember exists in the current schema but is not used by the MVP access model.
+
+Remove obsolete prototype-workspace documentation/configuration.
+
+## Scope
+
+Do NOT add:
+
+- join workspace
+- join codes
+- invitations
+- private workspaces
+- public/private flags
+- membership authorization
+- OWNER / EDITOR / VIEWER behavior
+- member management
+- ownership transfer
+- workspace rename
+- leave workspace
+- ADMIN
+- pagination
+- caching
+- new external dependencies
+
+Keep the implementation minimal.
+
+## Verification
+
+After implementation:
+
+1. Run the complete backend test suite.
+2. Run the frontend production build.
+3. Report the exact test count and failures/errors.
+4. Report all files changed.
+5. Report final REST contracts.
+6. Report final frontend routes.
+7. Report how workspace deletion authorization is enforced.
+8. Report how per-workspace presence works.
+9. Confirm that no production runtime dependency on PROTOTYPE_WORKSPACE_ID remains.
+10. Confirm that registration no longer creates WorkspaceMember.
+11. Confirm that workspace creation no longer creates WorkspaceMember.
+12. Report any deviation from this approved scope.
+
+Do not add unrelated cleanup or refactoring.
+

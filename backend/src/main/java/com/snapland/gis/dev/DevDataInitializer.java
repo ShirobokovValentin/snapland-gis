@@ -1,6 +1,5 @@
 package com.snapland.gis.dev;
 
-import com.snapland.gis.config.PrototypeProperties;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.boot.ApplicationArguments;
@@ -10,10 +9,6 @@ import org.springframework.jdbc.core.JdbcTemplate;
 import org.springframework.stereotype.Component;
 import org.springframework.transaction.annotation.Transactional;
 
-/**
- * Development-only bootstrap. Seeds one User, one Workspace, and the OWNER membership.
- * Remove this class when authentication and workspace management are implemented.
- */
 @Component
 @Profile("dev")
 class DevDataInitializer implements ApplicationRunner {
@@ -21,13 +16,10 @@ class DevDataInitializer implements ApplicationRunner {
     private static final Logger log = LoggerFactory.getLogger(DevDataInitializer.class);
 
     private final DevProperties devProperties;
-    private final PrototypeProperties prototypeProperties;
     private final JdbcTemplate jdbcTemplate;
 
-    DevDataInitializer(DevProperties devProperties, PrototypeProperties prototypeProperties,
-                       JdbcTemplate jdbcTemplate) {
+    DevDataInitializer(DevProperties devProperties, JdbcTemplate jdbcTemplate) {
         this.devProperties = devProperties;
-        this.prototypeProperties = prototypeProperties;
         this.jdbcTemplate = jdbcTemplate;
     }
 
@@ -35,7 +27,6 @@ class DevDataInitializer implements ApplicationRunner {
     @Transactional
     public void run(ApplicationArguments args) {
         String userId = devProperties.userId().toString();
-        String workspaceId = prototypeProperties.workspaceId().toString();
 
         jdbcTemplate.update("""
                 INSERT INTO users (id, name, email, created_at)
@@ -43,18 +34,6 @@ class DevDataInitializer implements ApplicationRunner {
                 ON CONFLICT (id) DO NOTHING
                 """, userId, "Dev User", "dev@snapland.local");
 
-        jdbcTemplate.update("""
-                INSERT INTO workspace (id, name, created_by, created_at)
-                VALUES (?::uuid, ?, ?::uuid, NOW())
-                ON CONFLICT (id) DO NOTHING
-                """, workspaceId, "Dev Workspace", userId);
-
-        jdbcTemplate.update("""
-                INSERT INTO workspace_member (id, workspace_id, user_id, role)
-                VALUES (gen_random_uuid(), ?::uuid, ?::uuid, 'OWNER')
-                ON CONFLICT (workspace_id, user_id) DO NOTHING
-                """, workspaceId, userId);
-
-        log.info("Dev bootstrap: user={} workspace={}", userId, workspaceId);
+        log.info("Dev bootstrap: user={}", userId);
     }
 }

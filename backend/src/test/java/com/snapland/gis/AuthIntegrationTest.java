@@ -3,7 +3,6 @@ package com.snapland.gis;
 import com.snapland.gis.auth.dto.AuthResponse;
 import com.snapland.gis.auth.dto.LoginRequest;
 import com.snapland.gis.auth.dto.RegisterRequest;
-import com.snapland.gis.config.PrototypeProperties;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -50,15 +49,11 @@ class AuthIntegrationTest {
     @Autowired
     private JdbcTemplate jdbcTemplate;
 
-    @Autowired
-    private PrototypeProperties prototypeProperties;
-
     @Value("${app.auth.jwt-secret}")
     private String jwtSecret;
 
     @BeforeEach
     void cleanUsers() {
-        // workspace_member FK → users, so delete members for non-seed users before users
         jdbcTemplate.update(
             "DELETE FROM workspace_member WHERE user_id NOT IN (SELECT id FROM users WHERE email = 'test@snapland.local')");
         jdbcTemplate.update("DELETE FROM users WHERE email != 'test@snapland.local'");
@@ -123,10 +118,10 @@ class AuthIntegrationTest {
         assertThat(subject).isEqualTo(body.user().id().toString());
     }
 
-    // --- TC-AUTH-REG-005: workspace membership created ---
+    // --- TC-AUTH-REG-005: registration does not create workspace membership ---
 
     @Test
-    void register_createsWorkspaceMembership() {
+    void register_doesNotCreateWorkspaceMembership() {
         var request = new RegisterRequest("Dave", "dave@example.com");
         ResponseEntity<AuthResponse> response = restTemplate.postForEntity(
                 "/auth/register", request, AuthResponse.class);
@@ -134,9 +129,9 @@ class AuthIntegrationTest {
         assertThat(response.getStatusCode()).isEqualTo(HttpStatus.CREATED);
         var userId = response.getBody().user().id();
         Integer count = jdbcTemplate.queryForObject(
-                "SELECT COUNT(*) FROM workspace_member WHERE user_id = ?::uuid AND workspace_id = ?::uuid",
-                Integer.class, userId.toString(), prototypeProperties.workspaceId().toString());
-        assertThat(count).isEqualTo(1);
+                "SELECT COUNT(*) FROM workspace_member WHERE user_id = ?::uuid",
+                Integer.class, userId.toString());
+        assertThat(count).isEqualTo(0);
     }
 
     // --- TC-AUTH-REG-006: blank name returns 400 ---

@@ -3207,8 +3207,8 @@ These are automated integration tests covering `PresenceService`, `PresenceContr
 ### Shared Preconditions
 
 - Backend is running with the `test` profile.
-- A Testcontainers PostGIS database is seeded with the dev user (`Test User`) and the prototype workspace.
-- All STOMP connections use a valid JWT. Sessions are disconnected in `@AfterEach`. Before each test, `PresenceService.getActiveUsers()` is polled until it returns an empty list.
+- A Testcontainers PostGIS database is seeded with the dev user (`Test User`). A test workspace is created in `@BeforeEach`.
+- All STOMP connections use a valid JWT with a `workspace-id` header matching the test workspace. Sessions are disconnected in `@AfterEach`. Before each test, `PresenceService.getActiveUsers()` is polled until it returns an empty list.
 
 ---
 
@@ -3717,6 +3717,126 @@ These tests require two browser windows with different authenticated users.
 **Expected:**
 - Browser A's "Area Deleted" panel is cleared automatically.
 - Browser A cannot attempt to restore a permanently deleted Area.
+
+---
+
+## 5g. Workspace Management API Tests
+
+These are automated integration tests covering workspace list, create, and delete operations. Implemented in `WorkspaceIntegrationTest`.
+
+### Shared Preconditions
+
+- Backend is running with the `test` profile.
+- A Testcontainers PostGIS database is used. `@BeforeEach` truncates all workspace and area data.
+- The dev user (`Test User`, id `00000000-0000-0000-0000-000000000001`) is available as the primary actor.
+- A second user is seeded in `@BeforeEach` for authorization tests.
+- All requests include a valid JWT in `Authorization: Bearer <token>`.
+
+---
+
+### TC-WS-LIST-001 — List workspaces returns empty array when no workspaces exist
+
+**Action:** `GET /workspaces` with valid JWT.
+
+**Expected:** `200 OK`, response body `[]`.
+
+---
+
+### TC-WS-LIST-002 — List workspaces returns created workspaces newest first
+
+**Setup:** Two workspaces are created in sequence.
+
+**Action:** `GET /workspaces` with valid JWT.
+
+**Expected:** `200 OK`, two entries, the most recently created workspace is first. Each entry contains `id`, `name`, `createdById`, `createdAt`.
+
+---
+
+### TC-WS-LIST-003 — List workspaces requires authentication
+
+**Action:** `GET /workspaces` — no `Authorization` header.
+
+**Expected:** `401 UNAUTHENTICATED`.
+
+---
+
+### TC-WS-CREATE-001 — Create workspace returns 201 with workspace fields
+
+**Action:** `POST /workspaces` with `{"name": "My Workspace"}` and valid JWT.
+
+**Expected:** `201 Created`, body contains `id` (UUID), `name` = `"My Workspace"`, `createdById` = authenticated user's UUID, `createdAt` (ISO-8601 timestamp).
+
+---
+
+### TC-WS-CREATE-002 — Workspace is persisted and visible in subsequent list
+
+**Setup:** No prior workspaces.
+
+**Action:** `POST /workspaces` to create workspace, then `GET /workspaces`.
+
+**Expected:** `GET` response contains the newly created workspace.
+
+---
+
+### TC-WS-CREATE-003 — Create workspace with blank name returns 400
+
+**Action:** `POST /workspaces` with `{"name": ""}`.
+
+**Expected:** `400 Bad Request` or `422`, no workspace created.
+
+---
+
+### TC-WS-CREATE-004 — Create workspace requires authentication
+
+**Action:** `POST /workspaces` with valid body — no `Authorization` header.
+
+**Expected:** `401 UNAUTHENTICATED`.
+
+---
+
+### TC-WS-DELETE-001 — Creator can delete their workspace — returns 204
+
+**Setup:** Creator creates a workspace.
+
+**Action:** `DELETE /workspaces/{id}` with creator's JWT.
+
+**Expected:** `204 No Content`. Subsequent `GET /workspaces` does not include the deleted workspace.
+
+---
+
+### TC-WS-DELETE-002 — Non-creator cannot delete a workspace — returns 403
+
+**Setup:** Creator creates a workspace. Second user authenticates.
+
+**Action:** `DELETE /workspaces/{id}` with second user's JWT.
+
+**Expected:** `403 WORKSPACE_ACCESS_DENIED`.
+
+---
+
+### TC-WS-DELETE-003 — Delete of unknown workspace returns 404
+
+**Action:** `DELETE /workspaces/{randomUUID}` with valid JWT.
+
+**Expected:** `404 WORKSPACE_NOT_FOUND`.
+
+---
+
+### TC-WS-DELETE-004 — Delete workspace cascades to areas and versions
+
+**Setup:** Creator creates a workspace. An area with at least one version is created in that workspace.
+
+**Action:** `DELETE /workspaces/{id}` with creator's JWT.
+
+**Expected:** `204 No Content`. Database contains no `area` or `area_version` rows for the deleted workspace.
+
+---
+
+### TC-WS-DELETE-005 — Delete workspace requires authentication
+
+**Action:** `DELETE /workspaces/{id}` — no `Authorization` header.
+
+**Expected:** `401 UNAUTHENTICATED`.
 
 ---
 

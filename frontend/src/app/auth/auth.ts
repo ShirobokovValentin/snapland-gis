@@ -34,7 +34,7 @@ export class AuthComponent {
     obs.subscribe({
       next: () => {
         this.loading = false;
-        this.router.navigate(['/map']);
+        this.router.navigate(['/workspaces']);
       },
       error: (err) => {
         this.loading = false;

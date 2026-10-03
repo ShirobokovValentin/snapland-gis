@@ -16,6 +16,7 @@ This repository is a take-home assignment implementing a simplified, prototype-g
 | Restore a previous version | Implemented |
 | Real-time area events over WebSocket (STOMP) | Implemented |
 | WebSocket JWT authentication | Implemented |
+| Workspace selection, creation, and deletion | Implemented |
 | Prototype registration and login (email only, no password) | Implemented — prototype |
 | Geometry validation (simple, non-self-intersecting polygons) | Implemented |
 | Area size calculation (km²) | Implemented — PostGIS (authoritative); live frontend preview while drawing and editing |
@@ -29,7 +30,7 @@ This repository is a take-home assignment implementing a simplified, prototype-g
 | Active users / presence | Implemented — REST snapshot + WebSocket incremental events; race-safe snapshot with event buffering; multi-tab collapses to single presence entry |
 | Deleted Areas management | Implemented — Deleted Areas panel lists soft-deleted areas with name and deletion date; Restore and Delete permanently actions |
 | Permanent delete with data purge | Implemented — explicit user action physically removes Area and version history; OCC-protected; DELETED state required |
-| Workspace membership authorization | Not implemented — known limitation |
+| Workspace membership / role-based access | Not implemented — known limitation |
 | Password-based authentication | Not implemented — prototype only |
 | GovMap integration | Not implemented — see [Map Providers](#map-providers) |
 | Frontend tests | Not implemented |
@@ -86,8 +87,9 @@ graph TD
 ```
 
 The backend exposes:
+- A REST API under `/workspaces` for workspace management.
 - A REST API under `/workspaces/{workspaceId}/areas` for area CRUD and version history.
-- A WebSocket endpoint at `/ws` (STOMP protocol) for real-time area events.
+- A WebSocket endpoint at `/ws` (STOMP protocol) for real-time area and workspace events.
 - Authentication endpoints at `/auth/register` and `/auth/login`.
 
 The Angular frontend proxies REST calls through the Angular dev server (`/api` → `http://localhost:8081`) and connects to the WebSocket URL directly.
@@ -139,7 +141,7 @@ WebSocket connections authenticate via a `Authorization: Bearer <token>` header 
 
 Area mutations publish events over STOMP to a per-workspace topic: `/topic/workspace/{workspaceId}`.
 
-Event types: `AREA_CREATED`, `AREA_UPDATED`, `AREA_DELETED`, `AREA_RESTORED`, `AREA_PERMANENTLY_DELETED`.
+Event types: `AREA_CREATED`, `AREA_UPDATED`, `AREA_DELETED`, `AREA_RESTORED`, `AREA_PERMANENTLY_DELETED`, `WORKSPACE_DELETED`.
 
 Example payload:
 
@@ -216,7 +218,15 @@ Replacing the tile provider requires updating the tile URL configuration in the 
 
 ## API Overview
 
-All area and version endpoints require a valid JWT in the `Authorization: Bearer <token>` header.
+All endpoints require a valid JWT in the `Authorization: Bearer <token>` header, except `/auth/**` and `/dev/token`.
+
+### Workspaces
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/workspaces` | List all workspaces, newest first |
+| `POST` | `/workspaces` | Create workspace — returns `{id, name, createdById, createdAt}` |
+| `DELETE` | `/workspaces/{id}` | Delete workspace and all contained data — creator only, returns 204 |
 
 ### Areas
 
@@ -237,7 +247,7 @@ All area and version endpoints require a valid JWT in the `Authorization: Bearer
 | `GET` | `/workspaces/{wid}/areas/{aid}/versions` | Full version log |
 | `POST` | `/workspaces/{wid}/areas/{aid}/versions/{v}/restore` | Restore to version `v` |
 
-### Authentication
+### Presence
 
 | Method | Path | Description |
 |--------|------|-------------|
@@ -289,7 +299,7 @@ The `postgres` container must reach `(healthy)` before the backend can connect. 
 
 ### Step 2 — Start the backend
 
-The `dev` Spring profile supplies all required secrets and seeds the database with a development user and shared workspace. No environment variables are required for local development.
+The `dev` Spring profile supplies all required secrets and seeds the database with a development user. No environment variables are required for local development.
 
 ```bash
 cd backend
@@ -318,12 +328,14 @@ Open **http://localhost:4201** in a browser.
 
 The dev server proxies `/api/*` requests to `http://localhost:8081`. WebSocket connects directly to `ws://localhost:8081/ws`.
 
-### Prototype authentication flow
+### Authentication and workspace flow
 
 1. Open http://localhost:4201 — the auth guard redirects unauthenticated users to `/auth`.
 2. Enter any email address and a display name to register.
 3. To log in as an existing user, enter the same email on the login screen.
 4. A JWT is stored in `localStorage` and attached to all subsequent requests.
+5. After login, the app redirects to `/workspaces` where you can create a workspace or open an existing one.
+6. Selecting a workspace opens the map at `/workspaces/:workspaceId/map`.
 
 ---
 
@@ -339,7 +351,6 @@ All values are preset; no `.env` file is needed.
 | `app.auth.jwt-expiration` | `PT24H` |
 | `app.auth.jwt-issuer` | `snapland` |
 | `app.dev.user-id` | `00000000-0000-0000-0000-000000000001` |
-| `app.prototype.workspace-id` | `00000000-0000-0000-0000-000000000002` |
 | `app.rate-limit.drawing-actions.max-actions` | `50` |
 | `app.rate-limit.drawing-actions.window` | `PT1M` |
 
@@ -348,7 +359,6 @@ All values are preset; no `.env` file is needed.
 | Variable | Description |
 |----------|-------------|
 | `JWT_SECRET` | HMAC-SHA256 signing key (minimum 32 characters) |
-| `PROTOTYPE_WORKSPACE_ID` | UUID of the shared prototype workspace |
 
 The rate limit defaults (`50` mutations per minute) are defined in `application.yml` and can be overridden with standard Spring property mechanisms.
 
@@ -373,7 +383,8 @@ cd backend
 | `AreaVersionHistoryIntegrationTest` | Version log ordering, snapshots, restore, 404/409 cases |
 | `AreaWebSocketIntegrationTest` | Event publishing for all mutation types; workspace isolation |
 | `AreaWebSocketAuthIntegrationTest` | WebSocket JWT acceptance and rejection (expired, wrong key, missing) |
-| `AuthIntegrationTest` | Registration, login, duplicate detection, JWT claims, workspace membership |
+| `AuthIntegrationTest` | Registration, login, duplicate detection, JWT claims |
+| `WorkspaceIntegrationTest` | List, create, delete workspaces; cascade delete; creator-only authorization |
 | `DrawingRateLimitIntegrationTest` | Per-user quota enforcement, 429 response contract, independent quotas, window reset, no DB write on reject, failed mutations count |
 | `AreaAuditIntegrationTest` | AreaVersion audit trail: exact actor per mutation type, changeType, version, timestamp; failed mutation creates no committed version |
 | `MetricsIntegrationTest` | Custom Micrometer metrics: committed mutation counters (all 4 change types), version conflict counter, rate limit rejection counter, Prometheus scrape endpoint, WebSocket session gauge (connect / disconnect / rejected connect / duplicate disconnect) |
@@ -383,7 +394,7 @@ cd backend
 | `SchemaIntegrationTest` | Database schema constraints and PostGIS spatial queries |
 | `SnaplandGisApplicationTests` | Spring context loads |
 
-**146 integration tests, 0 failures** (verified by `./mvnw test`). Frontend tests: not implemented.
+**158 integration tests, 0 failures** (verified by `./mvnw test`). Frontend tests: not implemented.
 
 ---
 
@@ -447,7 +458,6 @@ These are deliberate prototype constraints, not defects.
 | No workspace authorization | All authenticated users can access all workspaces |
 | Single-instance WebSocket broker | Spring `SimpleBroker` does not fan out across multiple backend instances; this also means presence is per-instance — users connected to different instances will not see each other |
 | Redis not integrated | Redis runs in `docker-compose` but has no application code |
-| Static workspace ID in frontend | `environment.ts` hardcodes `workspaceId` |
 | No OpenAPI documentation | No Swagger UI or OpenAPI spec |
 | No frontend tests | Angular components have no unit or e2e tests |
 | GovMap not integrated | Esri World Imagery used as a temporary tile source |
@@ -484,13 +494,13 @@ snapland-gis/
 │   │   ├── area/          # Area entity, repository, service, controller, DTOs
 │   │   ├── auth/          # AuthService, AuthController, JwtIssuer, DTOs
 │   │   ├── common/        # Exception hierarchy, GlobalExceptionHandler, ApiError
-│   │   ├── config/        # SecurityConfig, ClockConfig, JwtProperties, PrototypeProperties
+│   │   ├── config/        # SecurityConfig, ClockConfig, JwtProperties
 │   │   ├── ratelimit/     # DrawingRateLimiter, DrawingRateLimitInterceptor, DrawingRateLimitProperties
 │   │   ├── metrics/       # AreaMetricsListener, WebSocketSessionMetrics
 │   │   ├── dev/           # DevProperties, DevDataInitializer, DevTokenController
-│   │   ├── realtime/      # WebSocketConfig, JwtChannelInterceptor, AreaEventRelay, PresenceService, PresenceController
+│   │   ├── realtime/      # WebSocketConfig, JwtChannelInterceptor, WorkspaceSessionRegistry, AreaEventRelay, WorkspaceEventRelay, PresenceService, PresenceController
 │   │   ├── user/          # User entity, UserRepository
-│   │   └── workspace/     # Workspace, WorkspaceMember entities and repositories
+│   │   └── workspace/     # Workspace, WorkspaceMember entities, repositories, WorkspaceService, WorkspaceController
 │   └── src/main/resources/
 │       ├── application.yml
 │       ├── application-dev.yml
@@ -500,7 +510,8 @@ snapland-gis/
 │       ├── area/          # AreaService, area model, edit-panel component
 │       ├── auth/          # AuthService, AuthComponent, authGuard, authInterceptor
 │       ├── map/           # MapComponent (Leaflet integration)
-│       └── realtime/      # RealtimeService (STOMP client)
+│       ├── realtime/      # RealtimeService (STOMP client)
+│       └── workspace/     # WorkspaceService, WorkspaceListComponent, workspace model
 ├── docs/
 │   ├── REQUIREMENTS.md
 │   ├── DESIGN.md

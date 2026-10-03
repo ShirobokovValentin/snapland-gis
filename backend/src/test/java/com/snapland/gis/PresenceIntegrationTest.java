@@ -143,6 +143,7 @@ class PresenceIntegrationTest {
     private StompSession connect(WebSocketStompClient client, String token) throws Exception {
         StompHeaders headers = new StompHeaders();
         headers.add("Authorization", "Bearer " + token);
+        headers.add("workspace-id", workspaceId.toString());
         return client.connectAsync(
                 URI.create("ws://localhost:" + port + "/ws"),
                 new WebSocketHttpHeaders(), headers,
@@ -168,20 +169,20 @@ class PresenceIntegrationTest {
     private void awaitEmptyPresence() {
         long deadline = System.currentTimeMillis() + 5000;
         while (System.currentTimeMillis() < deadline) {
-            if (presenceService.getActiveUsers().isEmpty()) return;
+            if (presenceService.getActiveUsers(workspaceId.toString()).isEmpty()) return;
             try { Thread.sleep(50); } catch (InterruptedException e) { Thread.currentThread().interrupt(); return; }
         }
-        assertThat(presenceService.getActiveUsers())
+        assertThat(presenceService.getActiveUsers(workspaceId.toString()))
                 .as("Presence not empty before test started").isEmpty();
     }
 
     private void awaitPresenceSize(int expected) throws InterruptedException {
         long deadline = System.currentTimeMillis() + 5000;
         while (System.currentTimeMillis() < deadline) {
-            if (presenceService.getActiveUsers().size() == expected) return;
+            if (presenceService.getActiveUsers(workspaceId.toString()).size() == expected) return;
             Thread.sleep(50);
         }
-        assertThat(presenceService.getActiveUsers())
+        assertThat(presenceService.getActiveUsers(workspaceId.toString()))
                 .as("Presence size").hasSize(expected);
     }
 

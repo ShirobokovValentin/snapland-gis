@@ -9,6 +9,7 @@ import com.snapland.gis.common.exception.RateLimitExceededException;
 import com.snapland.gis.common.exception.UserAlreadyExistsException;
 import com.snapland.gis.common.exception.UserNotFoundException;
 import com.snapland.gis.common.exception.VersionConflictException;
+import com.snapland.gis.common.exception.WorkspaceAccessDeniedException;
 import com.snapland.gis.common.exception.WorkspaceNotFoundException;
 import io.micrometer.core.instrument.Counter;
 import io.micrometer.core.instrument.MeterRegistry;
@@ -43,6 +44,12 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> handleWorkspaceNotFound(WorkspaceNotFoundException ex) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(ApiError.of("WORKSPACE_NOT_FOUND", ex.getMessage(), traceId()));
+    }
+
+    @ExceptionHandler(WorkspaceAccessDeniedException.class)
+    public ResponseEntity<ApiError> handleWorkspaceAccessDenied(WorkspaceAccessDeniedException ex) {
+        return ResponseEntity.status(HttpStatus.FORBIDDEN)
+                .body(ApiError.of("WORKSPACE_ACCESS_DENIED", ex.getMessage(), traceId()));
     }
 
     @ExceptionHandler(AreaNotFoundException.class)

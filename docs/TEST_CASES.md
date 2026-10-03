@@ -3432,6 +3432,294 @@ These tests require two browser windows with different authenticated users.
 
 ---
 
+## 5d. Deleted Areas API Tests
+
+### TC-DELETED-001 — Soft-deleted Area appears in Deleted Areas API
+
+**Preconditions:** A DELETED Area exists in the workspace.
+
+**Steps:**
+1. `GET /workspaces/{workspaceId}/areas/deleted` with a valid JWT.
+
+**Expected:** `200 OK` with an array containing the deleted area. Response includes `id`, `workspaceId`, `name`, `currentVersion`, and `deletedAt`. `deletedAt` matches the `created_at` of the DELETED AreaVersion.
+
+---
+
+### TC-DELETED-002 — ACTIVE Area does not appear in Deleted Areas API
+
+**Preconditions:** One ACTIVE Area exists; no DELETED Areas.
+
+**Steps:**
+1. `GET /workspaces/{workspaceId}/areas/deleted`.
+
+**Expected:** `200 OK` with an empty array.
+
+---
+
+### TC-DELETED-003 — Normal viewport query continues to exclude DELETED Area
+
+**Preconditions:** An Area was soft-deleted.
+
+**Steps:**
+1. `GET /workspaces/{workspaceId}/areas?bbox=...` with a bbox that includes the deleted area's geometry.
+
+**Expected:** `200 OK` with an empty array; the deleted area is not included.
+
+---
+
+### TC-DELETED-004 — Restore removes Area from Deleted Areas API
+
+**Preconditions:** A DELETED Area exists.
+
+**Steps:**
+1. Restore the Area: `POST .../areas/{id}/versions/{v}/restore`.
+2. `GET /workspaces/{workspaceId}/areas/deleted`.
+
+**Expected:** The restored area no longer appears in the deleted areas list.
+
+---
+
+### TC-DELETED-005 — deletedAt matches the DELETED AreaVersion timestamp
+
+**Preconditions:** An Area is soft-deleted.
+
+**Steps:**
+1. `GET /workspaces/{workspaceId}/areas/deleted`.
+2. Query `area_version` for that area's deletion version.
+
+**Expected:** `deletedAt` in the response equals the `created_at` of the AreaVersion with `change_type = DELETED` at `current_version`.
+
+---
+
+## 5e. Permanent Delete API Tests
+
+### TC-PURGE-001 — Permanently deleting a DELETED Area physically removes the Area row
+
+**Preconditions:** An Area with `status = DELETED` at version N exists.
+
+**Steps:**
+1. `DELETE /workspaces/{workspaceId}/areas/{areaId}/permanent?expectedVersion=N`.
+
+**Expected:** `200 OK`. `SELECT COUNT(*) FROM area WHERE id = ...` returns 0.
+
+---
+
+### TC-PURGE-002 — Permanent delete removes associated AreaVersion history
+
+**Preconditions:** A DELETED Area with multiple AreaVersion rows.
+
+**Steps:**
+1. `DELETE .../permanent?expectedVersion=N`.
+
+**Expected:** `200 OK`. `SELECT COUNT(*) FROM area_version WHERE area_id = ...` returns 0.
+
+---
+
+### TC-PURGE-003 — Permanent delete of an ACTIVE Area is rejected
+
+**Preconditions:** An Area with `status = ACTIVE` at version 1.
+
+**Steps:**
+1. `DELETE .../permanent?expectedVersion=1`.
+
+**Expected:** `409 Conflict` with `code = AREA_NOT_DELETED`.
+
+---
+
+### TC-PURGE-004 — Permanent delete requires authentication
+
+**Preconditions:** A DELETED Area exists.
+
+**Steps:**
+1. `DELETE .../permanent?expectedVersion=N` with no Authorization header.
+
+**Expected:** `401 Unauthorized`.
+
+---
+
+### TC-PURGE-005 — Area from another workspace cannot be permanently deleted
+
+**Preconditions:** A DELETED Area exists in workspace A.
+
+**Steps:**
+1. `DELETE /workspaces/{workspaceBId}/areas/{areaId}/permanent?expectedVersion=N`.
+
+**Expected:** `404 AREA_NOT_FOUND`.
+
+---
+
+### TC-PURGE-006 — Second permanent delete of an already removed Area returns 404
+
+**Preconditions:** An Area has already been permanently deleted.
+
+**Steps:**
+1. `DELETE .../permanent?expectedVersion=N`.
+
+**Expected:** `404 AREA_NOT_FOUND`.
+
+---
+
+### TC-PURGE-007 — ABA stale-version conflict
+
+**Preconditions:**
+- Area created (v1 ACTIVE).
+- Soft deleted (v2 DELETED).
+- Restored (v3 ACTIVE).
+- Soft deleted again (v4 DELETED).
+- Client holds stale `expectedVersion=2`.
+
+**Steps:**
+1. `DELETE .../permanent?expectedVersion=2`.
+
+**Expected:**
+- `409 Conflict` with `code = VERSION_CONFLICT`.
+- Area still exists in DB at v4 with `status = DELETED`.
+- All 4 AreaVersion rows are intact.
+
+---
+
+### TC-PURGE-008 — Unknown workspace returns 404
+
+**Steps:**
+1. `DELETE /workspaces/{randomUuid}/areas/{randomUuid}/permanent?expectedVersion=1`.
+
+**Expected:** `404 WORKSPACE_NOT_FOUND`.
+
+---
+
+### TC-PURGE-009 — Stale expectedVersion returns 409 VERSION_CONFLICT
+
+**Preconditions:** A DELETED Area at version 2.
+
+**Steps:**
+1. `DELETE .../permanent?expectedVersion=99`.
+
+**Expected:** `409 Conflict` with `code = VERSION_CONFLICT`. Area row still exists.
+
+---
+
+### TC-PURGE-010 — Permanent delete returns the last DELETED state as the response body
+
+**Preconditions:** A DELETED Area.
+
+**Steps:**
+1. `DELETE .../permanent?expectedVersion=N`.
+
+**Expected:** `200 OK`. Response body is an `AreaResponse` with the area's last known DELETED state (`status = "DELETED"`, correct `id`, `name`, `currentVersion`).
+
+---
+
+## 5f. Deleted Areas UI Manual Tests
+
+### TC-UI-DELETED-001 — Soft delete makes Area disappear from map; opens just-deleted panel
+
+**Steps:**
+1. Click an Area on the map to open the popup.
+2. Click **Edit**, then **Delete**.
+
+**Expected:**
+- Area polygon disappears from the map.
+- A greyed-out polygon appears briefly.
+- An "Area Deleted" panel opens with Dismiss and Restore buttons.
+
+---
+
+### TC-UI-DELETED-002 — Deleted Areas panel lists deleted Area
+
+**Steps:**
+1. Dismiss the "Area Deleted" panel or reload the page.
+2. Click **Deleted Areas**.
+
+**Expected:**
+- A panel opens showing the area's name and deletion date.
+- Restore and Delete permanently buttons are visible.
+
+---
+
+### TC-UI-DELETED-003 — Restore from Deleted Areas panel
+
+**Steps:**
+1. Open Deleted Areas panel.
+2. Click **Restore** for an area.
+
+**Expected:**
+- The area disappears from the Deleted Areas list.
+- If the area's geometry is within the current viewport, it reappears on the map as a normal polygon.
+
+---
+
+### TC-UI-DELETED-004 — Permanent delete shows confirmation dialog
+
+**Steps:**
+1. Open Deleted Areas panel.
+2. Click **Delete permanently** for an area.
+
+**Expected:**
+- A browser confirm dialog appears with the area name and a warning that the action cannot be undone.
+
+---
+
+### TC-UI-DELETED-005 — Cancel permanent delete leaves Area in deleted list
+
+**Steps:**
+1. Open Deleted Areas panel.
+2. Click **Delete permanently**, then cancel the dialog.
+
+**Expected:**
+- The area remains in the Deleted Areas list.
+- No backend request was made.
+
+---
+
+### TC-UI-DELETED-006 — Confirm permanent delete removes Area from deleted list
+
+**Steps:**
+1. Open Deleted Areas panel.
+2. Click **Delete permanently** and confirm.
+
+**Expected:**
+- The area disappears from the Deleted Areas list.
+- Refreshing the page and reopening the panel does not show the area.
+
+---
+
+### TC-UI-DELETED-007 — Two-browser: permanent delete updates second browser's panel
+
+**Steps:**
+1. Open Deleted Areas panel in Browser A and Browser B (same area visible in both).
+2. Permanently delete the area from Browser A.
+
+**Expected:**
+- The area disappears from Browser A's panel immediately.
+- Browser B's panel also removes the area (via `AREA_PERMANENTLY_DELETED` WebSocket event) without a manual reload.
+
+---
+
+### TC-UI-DELETED-008 — Restored Area outside viewport is not incorrectly rendered
+
+**Steps:**
+1. Pan map far away from the Area's location.
+2. Restore the Area from the Deleted Areas panel.
+
+**Expected:**
+- The area disappears from the Deleted Areas list.
+- The area does NOT appear on the current map view (it is outside the viewport).
+- Panning to the area's location shows it correctly.
+
+---
+
+### TC-UI-DELETED-009 — AREA_PERMANENTLY_DELETED clears just-deleted panel if open
+
+**Steps:**
+1. Browser A soft-deletes an Area; the "Area Deleted" panel appears.
+2. Browser B permanently deletes the same Area before Browser A dismisses the panel.
+
+**Expected:**
+- Browser A's "Area Deleted" panel is cleared automatically.
+- Browser A cannot attempt to restore a permanently deleted Area.
+
+---
+
 ## 6. Discrepancies and Observations
 
 The following items describe gaps between the current prototype and the

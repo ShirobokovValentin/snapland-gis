@@ -3,7 +3,7 @@ import { HttpClient } from '@angular/common/http';
 import { Observable } from 'rxjs';
 import * as L from 'leaflet';
 import { environment } from '../../environments/environment';
-import { Area, AreaVersionResponse, CreateAreaRequest, UpdateAreaRequest } from './area.model';
+import { Area, AreaVersionResponse, CreateAreaRequest, DeletedArea, UpdateAreaRequest } from './area.model';
 
 @Injectable({ providedIn: 'root' })
 export class AreaService {
@@ -54,6 +54,19 @@ export class AreaService {
   getAreaVersions(areaId: string): Observable<AreaVersionResponse[]> {
     return this.http.get<AreaVersionResponse[]>(
       `${this.base}/workspaces/${this.workspaceId}/areas/${areaId}/versions`,
+    );
+  }
+
+  getDeletedAreas(): Observable<DeletedArea[]> {
+    return this.http.get<DeletedArea[]>(
+      `${this.base}/workspaces/${this.workspaceId}/areas/deleted`,
+    );
+  }
+
+  permanentDeleteArea(areaId: string, expectedVersion: number): Observable<Area> {
+    return this.http.delete<Area>(
+      `${this.base}/workspaces/${this.workspaceId}/areas/${areaId}/permanent`,
+      { params: { expectedVersion: expectedVersion.toString() } },
     );
   }
 

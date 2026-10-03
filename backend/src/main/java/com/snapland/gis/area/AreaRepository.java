@@ -82,4 +82,18 @@ public interface AreaRepository extends JpaRepository<Area, UUID> {
             @Param("areaKm2") BigDecimal areaKm2,
             @Param("expectedVersion") int expectedVersion
     );
+
+    @Modifying(clearAutomatically = true)
+    @Query(value = """
+            DELETE FROM area
+            WHERE id = :areaId
+              AND workspace_id = :workspaceId
+              AND status = 'DELETED'
+              AND current_version = :expectedVersion
+            """, nativeQuery = true)
+    int conditionalPermanentDelete(
+            @Param("areaId") UUID areaId,
+            @Param("workspaceId") UUID workspaceId,
+            @Param("expectedVersion") int expectedVersion
+    );
 }

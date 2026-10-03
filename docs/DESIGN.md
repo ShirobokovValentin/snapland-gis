@@ -1398,8 +1398,18 @@ Restore v2:
 
 v5 ACTIVE RESTORED
 
-AreaVersion records are append-only during normal application
-operations.
+AreaVersion records are append-only for retained Areas. Explicit permanent deletion by a user physically removes both the Area row and all its associated AreaVersion rows within the same database transaction. The audit trail is therefore scoped to Areas that have not been permanently deleted; it does not constitute a globally immutable ledger.
+
+**Permanent Delete** is a separate operation available only for Areas with `status = DELETED`. It physically removes the Area row and all associated AreaVersion rows. Permanent delete uses optimistic concurrency: the caller supplies the `expectedVersion` of the DELETED Area and the backend atomically verifies `status = 'DELETED' AND current_version = expectedVersion` before performing the physical deletion. If the version is stale, `409 VERSION_CONFLICT` is returned and no data is removed. An `AREA_PERMANENTLY_DELETED` WebSocket event is broadcast to connected clients after the transaction commits.
+
+**Area lifecycle:**
+
+```
+ACTIVE  ---(soft delete)--->  DELETED  ---(restore)--->  ACTIVE
+DELETED ---(permanent delete)--->  (row removed; not recoverable)
+```
+
+No `PURGED` status or `PURGED` ChangeType exists. The permanent delete operation leaves no AreaVersion record because the record would be removed immediately as part of the same operation.
 
 Atomic Area Mutation
 
@@ -1660,6 +1670,8 @@ The workspace context for an AreaVersion is always derivable via
 every Area mutation fact already committed atomically in AreaVersion — it
 would add one extra write per mutation without capturing any new information.
 
+**Audit trail is scoped to retained Areas.** AreaVersion records are append-only while the Area exists. Explicit permanent deletion by the user physically removes both the Area row and all its AreaVersion rows. After permanent deletion, no trace of the Area remains in the database. The audit guarantee is: *for any Area that has not been permanently deleted, its complete mutation history is preserved and append-only.*
+
 **Failed and rejected operations produce no AreaVersion record.** Requests
 rejected by rate limiting (429), OCC conflict (409), geometry validation (400),
 or any other error result in either no transaction or a rolled-back transaction.
@@ -1680,6 +1692,24 @@ audit table. User registration is implicitly recorded by the `users` row
 | Version history + Area mutation audit | AreaVersion (PostgreSQL, transactional) |
 | Request-level tracing and error recording | Application logs (SLF4J, structured, includes `traceId`) |
 | Operational counters, latency, health | Metrics — see Metrics section |
+
+### Data Retention
+
+| Data | Retention |
+|---|---|
+| ACTIVE Area | Retained normally; visible in viewport queries |
+| DELETED Area | Retained indefinitely; excluded from viewport queries; restorable via Deleted Areas API |
+| Permanently deleted Area | Area row and all AreaVersion rows physically removed; not recoverable |
+| AreaVersion (for retained Area) | Retained while the Area exists; append-only |
+| Automatic purge | None — no scheduled cleanup job |
+
+**Prototype policy:** DELETED Areas are retained indefinitely until the user explicitly restores or permanently deletes them. There is no configurable retention period and no scheduled cleanup.
+
+**Permanent delete precondition:** The Area must have `status = DELETED`. Permanent deletion of an ACTIVE Area is rejected with `409 AREA_NOT_DELETED`. This enforces the two-step lifecycle: soft delete first, permanent delete second.
+
+**Concurrency:** Permanent delete uses optimistic concurrency control (`current_version = expectedVersion`). An ABA race (DELETED → RESTORED → DELETED → stale permanent-delete attempt) is detected and rejected with `409 VERSION_CONFLICT`.
+
+**Production evolution:** A production system may introduce configurable retention periods for DELETED Areas (e.g., auto-purge after 90 days), a scheduled cleanup job, archival to cold storage, and compliance-driven retention rules. None of these are implemented in the prototype.
 
 ### Application Logging
 

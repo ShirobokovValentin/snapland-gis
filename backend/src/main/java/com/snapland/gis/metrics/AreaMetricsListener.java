@@ -24,6 +24,7 @@ public class AreaMetricsListener {
 
     private static final String METRIC_NAME = "area.mutations.committed.total";
     private static final String TAG_CHANGE_TYPE = "change_type";
+    private static final String PERMANENT_DELETIONS_METRIC = "area.permanent.deletions.total";
 
     private final MeterRegistry meterRegistry;
 
@@ -35,6 +36,9 @@ public class AreaMetricsListener {
                     .description("Committed Area mutations by change type")
                     .register(meterRegistry);
         }
+        Counter.builder(PERMANENT_DELETIONS_METRIC)
+                .description("Areas physically deleted via permanent delete")
+                .register(meterRegistry);
     }
 
     @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
@@ -42,6 +46,9 @@ public class AreaMetricsListener {
         String changeType = mapToChangeType(event.type());
         if (changeType != null) {
             meterRegistry.counter(METRIC_NAME, TAG_CHANGE_TYPE, changeType).increment();
+        }
+        if ("AREA_PERMANENTLY_DELETED".equals(event.type())) {
+            meterRegistry.counter(PERMANENT_DELETIONS_METRIC).increment();
         }
     }
 

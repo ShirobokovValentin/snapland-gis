@@ -26,8 +26,16 @@ export interface AreaVersionResponse {
   createdAt: string;
 }
 
+export interface DeletedArea {
+  id: string;
+  workspaceId: string;
+  name: string;
+  currentVersion: number;
+  deletedAt: string;
+}
+
 export interface AreaEventMessage {
-  type: 'AREA_CREATED' | 'AREA_UPDATED' | 'AREA_DELETED' | 'AREA_RESTORED';
+  type: 'AREA_CREATED' | 'AREA_UPDATED' | 'AREA_DELETED' | 'AREA_RESTORED' | 'AREA_PERMANENTLY_DELETED';
   workspaceId: string;
   timestamp: string;
   payload: Area;

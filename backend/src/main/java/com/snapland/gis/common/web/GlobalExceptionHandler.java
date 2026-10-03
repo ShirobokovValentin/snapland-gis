@@ -2,6 +2,7 @@ package com.snapland.gis.common.web;
 
 import com.snapland.gis.common.exception.AreaDeletedException;
 import com.snapland.gis.common.exception.AreaNotFoundException;
+import com.snapland.gis.common.exception.AreaNotDeletedException;
 import com.snapland.gis.common.exception.AreaVersionNotFoundException;
 import com.snapland.gis.common.exception.InvalidGeometryException;
 import com.snapland.gis.common.exception.RateLimitExceededException;
@@ -54,6 +55,12 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> handleAreaDeleted(AreaDeletedException ex) {
         return ResponseEntity.status(HttpStatus.CONFLICT)
                 .body(ApiError.of("AREA_DELETED", ex.getMessage(), traceId()));
+    }
+
+    @ExceptionHandler(AreaNotDeletedException.class)
+    public ResponseEntity<ApiError> handleAreaNotDeleted(AreaNotDeletedException ex) {
+        return ResponseEntity.status(HttpStatus.CONFLICT)
+                .body(ApiError.of("AREA_NOT_DELETED", ex.getMessage(), traceId()));
     }
 
     @ExceptionHandler(VersionConflictException.class)

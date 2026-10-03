@@ -11,7 +11,7 @@ import { FormsModule } from '@angular/forms';
 import * as L from 'leaflet';
 import 'leaflet-draw';
 import { AreaService } from '../area/area.service';
-import { Area, AreaEventMessage, AreaVersionResponse } from '../area/area.model';
+import { Area, AreaEventMessage, AreaVersionResponse, DeletedArea } from '../area/area.model';
 import { RealtimeService } from '../realtime/realtime.service';
 import { PresenceService } from '../realtime/presence.service';
 import { PresenceEventMessage, UserPresence } from '../realtime/presence.model';
@@ -54,6 +54,11 @@ export class MapComponent implements AfterViewInit, OnDestroy {
   deletedArea: Area | null = null;
   restoreSaving = false;
   private deletedLayer: L.Polygon | null = null;
+
+  deletedAreasPanelOpen = false;
+  deletedAreas: DeletedArea[] = [];
+  deletedAreasLoading = false;
+  deletedAreaProcessingId: string | null = null;
 
   editVersionWarning = false;
 
@@ -328,6 +333,73 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     });
   }
 
+  openDeletedAreas(): void {
+    this.clearDeletedArea();
+    this.deletedAreasPanelOpen = true;
+    this.loadDeletedAreas();
+  }
+
+  closeDeletedAreas(): void {
+    this.deletedAreasPanelOpen = false;
+    this.deletedAreas = [];
+    this.deletedAreaProcessingId = null;
+    this.cdr.detectChanges();
+  }
+
+  restoreFromDeletedList(area: DeletedArea): void {
+    const targetVersion = area.currentVersion - 1;
+    this.deletedAreaProcessingId = area.id;
+    this.cdr.detectChanges();
+
+    this.areaService.restoreArea(area.id, targetVersion, area.currentVersion).subscribe({
+      next: () => {
+        this.deletedAreaProcessingId = null;
+        this.deletedAreas = this.deletedAreas.filter(a => a.id !== area.id);
+        this.cdr.detectChanges();
+      },
+      error: (err) => {
+        this.deletedAreaProcessingId = null;
+        this.cdr.detectChanges();
+        if (err.status === 409) {
+          alert('This area was modified by another user. Reloading deleted areas.');
+          this.loadDeletedAreas();
+        } else {
+          this.handleMutationError(err, 'restore area');
+        }
+      },
+    });
+  }
+
+  permanentDeleteArea(area: DeletedArea): void {
+    const confirmed = confirm(
+      `Delete "${area.name}" permanently?\n\n` +
+      `This permanently deletes the area and its version history.\n` +
+      `This action cannot be undone.`,
+    );
+    if (!confirmed) return;
+
+    this.deletedAreaProcessingId = area.id;
+    this.cdr.detectChanges();
+
+    this.areaService.permanentDeleteArea(area.id, area.currentVersion).subscribe({
+      next: () => {
+        this.deletedAreaProcessingId = null;
+        this.deletedAreas = this.deletedAreas.filter(a => a.id !== area.id);
+        this.cdr.detectChanges();
+      },
+      error: (err) => {
+        this.deletedAreaProcessingId = null;
+        this.cdr.detectChanges();
+        if (err.status === 409) {
+          alert('This area was modified by another user. Reloading deleted areas.');
+          this.loadDeletedAreas();
+        } else {
+          this.handleMutationError(err, 'permanently delete area');
+        }
+      },
+    });
+  }
+
   logout(): void {
     this.realtimeService.disconnect();
     this.authService.logout();
@@ -487,10 +559,41 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     }
   }
 
+  private loadDeletedAreas(): void {
+    this.deletedAreasLoading = true;
+    this.cdr.detectChanges();
+    this.areaService.getDeletedAreas().subscribe({
+      next: (areas) => {
+        this.deletedAreas = areas;
+        this.deletedAreasLoading = false;
+        this.cdr.detectChanges();
+      },
+      error: (err) => {
+        this.deletedAreasLoading = false;
+        this.cdr.detectChanges();
+        console.error('Failed to load deleted areas', err);
+      },
+    });
+  }
+
   private handleRealtimeEvent(event: AreaEventMessage): void {
     if (event.type === 'AREA_UPDATED' && this.editingArea?.id === event.payload.id) {
       this.editVersionWarning = true;
       this.cdr.detectChanges();
+    }
+    if (event.type === 'AREA_PERMANENTLY_DELETED') {
+      const deletedId = event.payload.id;
+      if (this.deletedArea?.id === deletedId) {
+        this.clearDeletedArea();
+      }
+      if (this.deletedAreasPanelOpen) {
+        this.deletedAreas = this.deletedAreas.filter(a => a.id !== deletedId);
+        this.cdr.detectChanges();
+      }
+      return;
+    }
+    if (event.type === 'AREA_RESTORED' && this.deletedAreasPanelOpen) {
+      this.deletedAreas = this.deletedAreas.filter(a => a.id !== event.payload.id);
     }
     this.loadViewport();
   }

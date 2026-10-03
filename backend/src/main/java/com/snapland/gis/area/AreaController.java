@@ -3,6 +3,7 @@ package com.snapland.gis.area;
 import com.snapland.gis.area.dto.AreaResponse;
 import com.snapland.gis.area.dto.AreaVersionResponse;
 import com.snapland.gis.area.dto.CreateAreaRequest;
+import com.snapland.gis.area.dto.DeletedAreaResponse;
 import com.snapland.gis.area.dto.RestoreAreaRequest;
 import com.snapland.gis.area.dto.UpdateAreaRequest;
 import jakarta.validation.Valid;
@@ -41,6 +42,11 @@ public class AreaController {
         return areaService.findInViewport(workspaceId, bbox);
     }
 
+    @GetMapping("/deleted")
+    public List<DeletedAreaResponse> getDeletedAreas(@PathVariable UUID workspaceId) {
+        return areaService.findDeleted(workspaceId);
+    }
+
     @PutMapping("/{areaId}")
     public AreaResponse updateArea(
             @PathVariable UUID workspaceId,
@@ -64,6 +70,15 @@ public class AreaController {
             @PathVariable UUID workspaceId,
             @PathVariable UUID areaId) {
         return areaService.getAreaVersions(workspaceId, areaId);
+    }
+
+    @DeleteMapping("/{areaId}/permanent")
+    public AreaResponse permanentDeleteArea(
+            @PathVariable UUID workspaceId,
+            @PathVariable UUID areaId,
+            @RequestParam int expectedVersion,
+            @AuthenticationPrincipal Jwt jwt) {
+        return areaService.permanentDeleteArea(workspaceId, areaId, expectedVersion, UUID.fromString(jwt.getSubject()));
     }
 
     @PostMapping("/{areaId}/versions/{version}/restore")

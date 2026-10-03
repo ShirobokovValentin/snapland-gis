@@ -27,6 +27,8 @@ This repository is a take-home assignment implementing a simplified, prototype-g
 | Custom Micrometer metrics + Prometheus endpoint | Implemented — committed mutation counters (by change type), version conflict counter, rate limit rejection counter, active WebSocket session gauge; exposed at `/actuator/prometheus` |
 | WebSocket graceful degradation and reconnect | Implemented — auto-reconnect with JWT refresh on every attempt; viewport reconciliation via REST after reconnect; "Reconnecting" status banner |
 | Active users / presence | Implemented — REST snapshot + WebSocket incremental events; race-safe snapshot with event buffering; multi-tab collapses to single presence entry |
+| Deleted Areas management | Implemented — Deleted Areas panel lists soft-deleted areas with name and deletion date; Restore and Delete permanently actions |
+| Permanent delete with data purge | Implemented — explicit user action physically removes Area and version history; OCC-protected; DELETED state required |
 | Workspace membership authorization | Not implemented — known limitation |
 | Password-based authentication | Not implemented — prototype only |
 | GovMap integration | Not implemented — see [Map Providers](#map-providers) |
@@ -137,7 +139,7 @@ WebSocket connections authenticate via a `Authorization: Bearer <token>` header 
 
 Area mutations publish events over STOMP to a per-workspace topic: `/topic/workspace/{workspaceId}`.
 
-Event types: `AREA_CREATED`, `AREA_UPDATED`, `AREA_DELETED`, `AREA_RESTORED`.
+Event types: `AREA_CREATED`, `AREA_UPDATED`, `AREA_DELETED`, `AREA_RESTORED`, `AREA_PERMANENTLY_DELETED`.
 
 Example payload:
 
@@ -173,9 +175,23 @@ The presence panel in the lower-left corner of the map shows all currently activ
 
 ---
 
+### Deleted Areas Management
+
+When an area is soft-deleted it disappears from the map but is retained indefinitely. Users can access deleted areas via the **Deleted Areas** button on the map, which opens a panel listing each deleted area's name and deletion date with Restore and Delete permanently actions.
+
+**Restore** calls the existing restore endpoint, making the area ACTIVE again. If the area is within the current viewport, it reappears on the map for all connected users via the `AREA_RESTORED` WebSocket event.
+
+**Delete permanently** opens a browser confirm dialog, then calls `DELETE /workspaces/{wid}/areas/{aid}/permanent?expectedVersion=N`. This physically removes the Area row and all its AreaVersion history from the database. The operation requires the area to already be in `DELETED` state (permanent deletion of an ACTIVE area returns `409 AREA_NOT_DELETED`). The `expectedVersion` parameter is required for OCC: if the area was concurrently modified since the panel was loaded, the backend returns `409 VERSION_CONFLICT` and the client reloads the deleted areas list.
+
+An `AREA_PERMANENTLY_DELETED` WebSocket event is broadcast after commit. Clients with the Deleted Areas panel open remove the area from the list. If a client still has the just-deleted single-area panel open for the same area, that panel is also cleared.
+
+**Retention policy:** DELETED areas are retained indefinitely with no automatic expiry or scheduled cleanup. The only way to permanently remove an area is the explicit user action described above.
+
+---
+
 ## Version History
 
-Every area mutation appends a snapshot row to `area_version`. Version numbers are monotonically increasing per area. History is never deleted.
+Every area mutation appends a snapshot row to `area_version`. Version numbers are monotonically increasing per area. History is retained until the area is permanently deleted.
 
 Restoring a version creates a new `area_version` entry with `change_type = RESTORED`, copying the snapshot from the target version.
 
@@ -211,6 +227,8 @@ All area and version endpoints require a valid JWT in the `Authorization: Bearer
 | `GET` | `/workspaces/{wid}/areas/{aid}` | Get single area |
 | `PUT` | `/workspaces/{wid}/areas/{aid}` | Update area (name and/or geometry) |
 | `DELETE` | `/workspaces/{wid}/areas/{aid}?expectedVersion={n}` | Soft-delete area |
+| `GET` | `/workspaces/{wid}/areas/deleted` | List all soft-deleted areas (id, name, currentVersion, deletedAt) |
+| `DELETE` | `/workspaces/{wid}/areas/{aid}/permanent?expectedVersion={n}` | Permanently delete a DELETED area and its version history |
 
 ### Version History
 
@@ -360,10 +378,12 @@ cd backend
 | `AreaAuditIntegrationTest` | AreaVersion audit trail: exact actor per mutation type, changeType, version, timestamp; failed mutation creates no committed version |
 | `MetricsIntegrationTest` | Custom Micrometer metrics: committed mutation counters (all 4 change types), version conflict counter, rate limit rejection counter, Prometheus scrape endpoint, WebSocket session gauge (connect / disconnect / rejected connect / duplicate disconnect) |
 | `PresenceIntegrationTest` | Presence REST snapshot (auth, unknown workspace, empty list, user included after connect); PRESENCE_JOINED and PRESENCE_LEFT events; multi-tab session collapsing; two-user snapshot |
+| `DeletedAreasIntegrationTest` | Deleted areas API: deleted area appears, active area excluded, viewport exclusion, restore removes from list, deletedAt timestamp |
+| `PermanentDeleteIntegrationTest` | Physical removal, AreaVersion purge, ACTIVE area rejection, auth requirement, workspace scoping, double-delete 404, ABA stale-version VERSION_CONFLICT, unknown workspace, stale expectedVersion, response body |
 | `SchemaIntegrationTest` | Database schema constraints and PostGIS spatial queries |
 | `SnaplandGisApplicationTests` | Spring context loads |
 
-**131 integration tests, 0 failures** (verified by `./mvnw test`). Frontend tests: not implemented.
+**146 integration tests, 0 failures** (verified by `./mvnw test`). Frontend tests: not implemented.
 
 ---
 

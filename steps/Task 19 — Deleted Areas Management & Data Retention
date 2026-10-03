@@ -1,0 +1,1367 @@
+We are ready to investigate the next task:
+
+Task 19 — Deleted Areas Management & Data Retention
+
+DO NOT implement anything yet.
+
+The goal is to complete the currently incomplete user-facing delete/restore
+lifecycle and define a clear prototype data-retention policy.
+
+Read and inspect the actual repository first:
+
+- CLAUDE.md
+- README.md
+- docs/REQUIREMENTS.md
+- docs/DESIGN.md
+- docs/TEST_CASES.md
+- database migrations
+- Area entity
+- AreaVersion entity
+- AreaStatus / ChangeType
+- Area repositories
+- Area service
+- Area REST controller
+- current DELETE implementation
+- current RESTORE implementation
+- version-history implementation
+- Task 14 audit semantics
+- current frontend Area delete flow
+- current frontend history/restore flow
+- current map viewport loading
+- current WebSocket Area events
+
+Use actual code as the source of truth.
+
+Do NOT modify any files.
+
+# Problem
+
+The backend already supports soft delete and restore.
+
+Conceptually:
+
+    ACTIVE
+       |
+       | soft delete
+       v
+    DELETED
+       |
+       | restore
+       v
+    ACTIVE
+
+However, a deleted Area disappears from the normal map/query results.
+
+This creates a usability problem:
+
+    user deletes Area
+        ↓
+    Area disappears from map
+        ↓
+    user can no longer select it
+        ↓
+    Restore exists technically,
+    but may not be reachable through normal UI
+
+Investigate whether this is exactly how the current implementation behaves.
+
+Do not assume it — verify it from the code.
+
+# Desired user lifecycle
+
+We are considering this model:
+
+                    Soft Delete
+        ACTIVE ----------------------> DELETED
+           ^                            |
+           |                            |
+           | Restore                    | Delete Permanently
+           |                            |
+           +----------------------------+
+                                        |
+                                        v
+                                      PURGED
+
+Important:
+
+PURGED should NOT be a new Area status.
+
+PURGED means that the Area row no longer exists.
+
+# Proposed MVP retention policy
+
+The current preferred policy is:
+
+    ACTIVE Area
+        retained normally
+
+    DELETED Area
+        retained indefinitely
+
+    AreaVersion
+        retained while the Area exists
+
+    automatic purge
+        NONE
+
+    permanent deletion
+        explicit user action only
+
+A deleted Area therefore remains recoverable indefinitely unless the user
+explicitly chooses "Delete permanently".
+
+Do NOT introduce arbitrary retention periods such as 30/90 days.
+
+Do NOT add a scheduled cleanup job.
+
+First determine whether this policy fits the existing data model.
+
+# Part 1 — Current soft-delete behavior
+
+Determine exactly:
+
+1. What happens in the database when DELETE Area is called?
+2. Is Area.status changed to DELETED?
+3. Is an AreaVersion with change_type=DELETED created?
+4. Is version incremented?
+5. Does the normal viewport query exclude DELETED Areas?
+6. Are DELETED Areas accessible through any existing REST endpoint?
+7. Can the frontend currently discover a deleted Area after it disappears?
+8. Is Restore currently reachable from the UI after deletion?
+
+Explicitly determine whether the current Restore feature is functionally
+usable by a normal user.
+
+# Part 2 — Deleted Areas UI
+
+We want the smallest useful UI.
+
+Conceptually:
+
+    Deleted Areas (2)
+
+    ┌──────────────────────────────────┐
+    │ Park boundary                    │
+    │ Deleted: 2026-10-03              │
+    │                                  │
+    │ [Restore] [Delete permanently]   │
+    └──────────────────────────────────┘
+
+    ┌──────────────────────────────────┐
+    │ Test polygon                     │
+    │ Deleted: 2026-10-02              │
+    │                                  │
+    │ [Restore] [Delete permanently]   │
+    └──────────────────────────────────┘
+
+Do not build a large management system.
+
+Investigate the current map layout and recommend the smallest integration.
+
+Possible approaches:
+
+- collapsible "Deleted Areas" panel;
+- button opening a small panel;
+- reuse an existing side panel if appropriate.
+
+Do not introduce a new frontend library.
+
+# Part 3 — Retrieving deleted Areas
+
+Determine the cleanest API.
+
+Evaluate at least:
+
+A.
+
+    GET /workspaces/{workspaceId}/areas/deleted
+
+B.
+
+    GET /workspaces/{workspaceId}/areas?status=DELETED
+
+C. Another approach that fits the current REST conventions better.
+
+Important:
+
+The normal viewport query:
+
+    GET /workspaces/{workspaceId}/areas?bbox=...
+
+must continue to return ACTIVE Areas only unless there is a strong reason to
+change that contract.
+
+Deleted Areas do not need to be rendered as normal polygons on the map.
+
+Determine what information the Deleted Areas list needs.
+
+Potentially:
+
+    id
+    name
+    deletedAt
+    version
+
+Do not return geometry if the UI does not need it.
+
+Check whether the current model actually stores a direct deletedAt field.
+
+If not, determine whether the deletion timestamp can safely come from the
+latest DELETED AreaVersion.
+
+Do NOT add deleted_at automatically without first evaluating the existing
+model.
+
+# Part 4 — Restore
+
+Investigate the current restore API and behavior.
+
+Expected UX:
+
+    Deleted Areas
+        ↓
+    Restore
+        ↓
+    backend restores Area
+        ↓
+    Area becomes ACTIVE
+        ↓
+    Area disappears from Deleted Areas
+        ↓
+    normal realtime/map flow makes it visible again
+
+Verify whether existing WebSocket REST/event behavior already supports the
+last step.
+
+Do not duplicate realtime infrastructure.
+
+Also determine what happens if the restored Area is outside the current
+viewport.
+
+It should not be rendered merely because it was restored if it does not
+belong in the current viewport.
+
+Preserve existing viewport semantics.
+
+# Part 5 — Permanent Delete
+
+Investigate adding an explicit permanent-delete operation.
+
+Potential contract:
+
+    DELETE /workspaces/{workspaceId}/areas/{areaId}/permanent
+
+or another REST shape that better fits the existing API.
+
+Do not decide the exact endpoint before inspecting current controller
+conventions.
+
+Permanent delete must only be allowed for an Area that is already DELETED.
+
+Expected:
+
+    ACTIVE Area
+        ↓ permanent delete
+        409 / validation error
+
+    DELETED Area
+        ↓ permanent delete
+        physical deletion
+
+This protects against accidental bypass of soft delete.
+
+# Part 6 — Confirmation UX
+
+Permanent deletion must require explicit frontend confirmation.
+
+Example concept:
+
+    Delete "Park boundary" permanently?
+
+    This permanently deletes the Area and its version history.
+    This action cannot be undone.
+
+    [Cancel] [Delete permanently]
+
+Inspect the existing confirmation UI patterns.
+
+Reuse them if possible.
+
+Do not add a modal library.
+
+# Part 7 — AreaVersion / FK behavior
+
+This is critical.
+
+Inspect the actual database schema.
+
+Determine the relationship:
+
+    Area
+      ↓
+    AreaVersion
+
+and specifically the FK behavior.
+
+Answer:
+
+1. What happens today if an Area row is physically deleted?
+2. Does area_version have ON DELETE CASCADE?
+3. Does JPA cascade/orphanRemoval affect this?
+4. Would AreaVersion rows survive?
+5. Would the FK reject the deletion?
+6. Is any migration required?
+
+The currently preferred MVP semantics are:
+
+    Permanent Delete
+        ↓
+    physically delete Area
+        +
+    physically delete its AreaVersion history
+
+because permanent deletion should actually be permanent.
+
+But do NOT implement this assumption until the current schema is verified.
+
+If this conflicts with Task 14 audit semantics, explain the conflict clearly.
+
+# Part 8 — Audit semantics
+
+Task 14 currently treats AreaVersion as an append-only Area change history.
+
+Permanent deletion introduces an intentional boundary:
+
+    while Area exists:
+        history is append-only
+
+    permanent deletion:
+        Area + associated history are physically removed
+
+Analyze whether DESIGN.md should explicitly redefine the audit guarantee as:
+
+    AreaVersion is append-only for retained Areas.
+    Explicit permanent deletion removes both the Area and its associated
+    version history.
+
+Do not claim the audit trail is globally immutable if permanent deletion can
+remove it.
+
+This documentation must be internally consistent.
+
+# Part 9 — Should permanent deletion create PURGED AreaVersion?
+
+Probably not, because the record would immediately be physically deleted.
+
+Analyze this explicitly.
+
+Avoid creating:
+
+    change_type = PURGED
+
+unless there is a concrete reason.
+
+Do not add a PURGED enum/status just for this task.
+
+# Part 10 — WebSocket behavior
+
+Determine whether permanent deletion needs a new WebSocket event.
+
+Potentially:
+
+    AREA_PERMANENTLY_DELETED
+
+may be unnecessary because DELETED Areas are already absent from normal map
+state before permanent deletion.
+
+Clients showing the Deleted Areas panel may need to update, however.
+
+Compare:
+
+A. broadcast a new permanent-delete event;
+
+B. update only the initiating client's Deleted Areas list;
+
+C. reuse an existing event if semantically correct;
+
+D. reload the deleted list when relevant.
+
+Prefer the simplest correct behavior for two users.
+
+Example:
+
+    Alice and Bob both have Deleted Areas panel open.
+    Alice permanently deletes Area X.
+
+Bob should not continue indefinitely showing Area X as restorable.
+
+Determine the cleanest solution.
+
+Do not overload AREA_DELETED if that would create incorrect normal-map
+behavior.
+
+# Part 11 — Concurrency
+
+Analyze these races:
+
+## Restore vs permanent delete
+
+Alice:
+
+    Restore Area X
+
+Bob simultaneously:
+
+    Delete permanently Area X
+
+What happens?
+
+## Two permanent deletes
+
+Alice and Bob both permanently delete X.
+
+## Stale Deleted Areas panel
+
+User sees:
+
+    Area X version 5
+
+but another user restores it before permanent deletion is submitted.
+
+Determine whether the existing optimistic-version mechanism should also
+protect permanent deletion.
+
+Prefer consistent behavior with existing mutation semantics.
+
+Do not create complex locking infrastructure.
+
+# Part 12 — Authorization
+
+Permanent delete must require authentication.
+
+Also inspect existing workspace membership/access semantics.
+
+Do not weaken security.
+
+A user must not be able to permanently delete an Area from an arbitrary
+workspace merely by knowing its UUID.
+
+Follow the same workspace validation/ownership rules as existing Area
+mutations.
+
+# Part 13 — Rate limiting
+
+Task 13 rate-limits drawing mutations.
+
+Determine whether:
+
+    permanent delete
+
+should count as an Area mutation for rate limiting.
+
+Likewise check whether Restore already counts.
+
+Prefer consistency with existing mutation classification.
+
+Do not silently bypass mutation rate limiting.
+
+# Part 14 — Metrics
+
+Task 15 currently counts committed mutations by change_type.
+
+Analyze what permanent deletion should do.
+
+Potential choices:
+
+A. Add PURGED metric/change type.
+B. Separate metric:
+       area.permanent.deletions.total
+C. No new metric for prototype.
+
+Do NOT add PURGED to AreaVersion merely to support metrics.
+
+Recommend the smallest semantically clean solution.
+
+# Part 15 — Geographic cache
+
+Task 18 concluded that geographic viewport caching is intentionally deferred.
+
+Do not add caching as part of this task.
+
+# Part 16 — Retention semantics
+
+Evaluate the proposed final policy:
+
+    ACTIVE
+        retained
+
+    DELETED
+        retained indefinitely and available for Restore
+
+    PERMANENT DELETE
+        explicit user action
+        physically removes the Area
+        cannot be restored
+
+    AreaVersion
+        retained while Area exists
+        removed with permanent deletion
+
+    automatic purge
+        none
+
+Explain whether this is a valid and coherent prototype retention policy.
+
+Distinguish it from production policy.
+
+Production may later introduce:
+
+    configurable retention period
+    scheduled purge
+    archival
+    compliance-specific retention
+
+but none of these should be implemented now.
+
+# Part 17 — Tests
+
+Propose backend integration tests at minimum:
+
+TC-DELETED-001
+Soft-deleted Area appears in Deleted Areas API.
+
+TC-DELETED-002
+ACTIVE Area does not appear in Deleted Areas API.
+
+TC-DELETED-003
+Normal viewport API continues to exclude DELETED Area.
+
+TC-DELETED-004
+Restore removes Area from Deleted Areas API and returns it to ACTIVE state.
+
+TC-PURGE-001
+Permanently deleting a DELETED Area physically removes it.
+
+TC-PURGE-002
+Permanent delete removes associated AreaVersion history if that is the
+approved FK/audit policy.
+
+TC-PURGE-003
+Permanent delete of ACTIVE Area is rejected.
+
+TC-PURGE-004
+Permanent delete requires authentication.
+
+TC-PURGE-005
+Area from another/unknown workspace cannot be permanently deleted through
+the requested workspace.
+
+TC-PURGE-006
+Second permanent delete of already removed Area returns the project's
+normal not-found behavior.
+
+TC-PURGE-007
+Restore/permanent-delete stale version conflict is handled consistently.
+
+TC-PURGE-008
+Permanent delete does not leave the Area visible/restorable to another
+client after state reconciliation.
+
+Adjust these cases based on actual architecture.
+
+Frontend:
+
+Do not introduce a new frontend test framework if none exists.
+
+Define manual cases for:
+
+- delete → disappears from map;
+- open Deleted Areas → Area is present;
+- restore → Area returns appropriately;
+- permanent delete → confirmation;
+- cancel permanent delete;
+- confirm permanent delete;
+- permanently deleted Area disappears from Deleted Areas;
+- two-browser synchronization;
+- restored Area outside viewport is not incorrectly rendered.
+
+# Documentation
+
+Expected updates after implementation:
+
+README.md
+
+Document:
+
+- soft delete;
+- Deleted Areas UI;
+- restore;
+- explicit permanent delete;
+- no automatic purge;
+- retention policy.
+
+docs/DESIGN.md
+
+Document:
+
+- lifecycle:
+      ACTIVE → DELETED → ACTIVE
+      DELETED → physically removed
+- retention semantics;
+- audit-history boundary;
+- concurrency semantics;
+- no scheduled cleanup.
+
+docs/TEST_CASES.md
+
+Add the approved cases.
+
+Also inspect REQUIREMENTS.md.
+
+Do not rewrite original assignment requirements merely to match the
+implementation. If REQUIREMENTS.md distinguishes original requirements from
+implementation decisions, preserve that distinction.
+
+# Scope exclusions
+
+Do NOT implement:
+
+- PURGED Area status;
+- PURGED AreaVersion change type unless explicitly approved later;
+- scheduled cleanup;
+- automatic 30/60/90-day deletion;
+- Redis;
+- archive database;
+- cold storage;
+- account deletion;
+- GDPR workflow;
+- backup retention;
+- audit-log service;
+- admin console;
+- role-based delete permissions unless already required;
+- frontend framework/library solely for this task.
+
+# Expected pre-implementation report
+
+Produce:
+
+1. Current Area delete implementation.
+2. Current Area restore implementation.
+3. Whether Restore is currently reachable through normal UI.
+4. Current API visibility of DELETED Areas.
+5. Current DB lifecycle.
+6. Current AreaVersion behavior.
+7. Exact FK/cascade behavior.
+8. What physical Area deletion does today.
+9. Recommended Deleted Areas API.
+10. Recommended Deleted Areas response DTO.
+11. How deletedAt should be determined.
+12. Recommended frontend Deleted Areas UI.
+13. Restore UX and backend flow.
+14. Recommended permanent-delete API.
+15. Permanent-delete preconditions.
+16. Confirmation UX.
+17. Whether AreaVersion should be deleted during permanent deletion.
+18. Updated Task 14 audit semantics.
+19. Whether a PURGED status/change_type is needed.
+20. WebSocket synchronization strategy.
+21. Two-browser behavior.
+22. Restore vs permanent-delete concurrency behavior.
+23. Two simultaneous permanent deletes behavior.
+24. Optimistic-version requirements.
+25. Authentication/workspace validation.
+26. Rate-limit interaction.
+27. Metrics interaction.
+28. Final prototype retention policy.
+29. Production retention evolution.
+30. Exact backend files to create/modify.
+31. Exact frontend files to create/modify.
+32. DB migrations required, if any.
+33. Tests to add/modify.
+34. Documentation changes.
+35. Dependencies required, if any.
+36. Known limitations.
+37. Implementation sequence.
+
+End with explicit answers:
+
+A. Can a normal user currently restore an Area after deleting it?
+
+B. How will a user find deleted Areas after Task 19?
+
+C. Is soft-deleted data automatically expired?
+
+D. What exactly does "Delete permanently" remove?
+
+E. Can an ACTIVE Area be permanently deleted directly?
+
+F. Does permanent deletion preserve or destroy AreaVersion history?
+
+G. Is PURGED a database status?
+
+H. Is a scheduled cleanup job required?
+
+I. How are two clients kept consistent when one restores or permanently
+   deletes an Area?
+
+J. Does Task 19 require a database migration?
+
+K. Does Task 19 require any new dependency?
+
+Do NOT modify any files.
+
+Stop after the report and wait for approval.
+
+
+
+---
+Task 19 — Pre-Implementation Report: Deleted Areas Management & Data Retention
+
+Part 1 — Current soft-delete behavior
+
+1. What happens in the database when DELETE Area is called?
+
+AreaService.deleteArea() calls areaRepository.conditionalDelete(), which executes this atomic SQL:
+
+UPDATE area
+SET status = 'DELETED', current_version = current_version + 1
+WHERE id = :areaId
+  AND workspace_id = :workspaceId
+  AND status = 'ACTIVE'
+  AND current_version = :expectedVersion
+
+After the conditional update succeeds, a new AreaVersion row is inserted with changeType = DELETED and status = DELETED. An AREA_DELETED application event is published and relayed to /topic/workspace/{workspaceId} after commit.
+
+2. Is Area.status changed to DELETED?
+
+Yes. The conditionalDelete query sets status = 'DELETED' atomically.
+
+3. Is an AreaVersion with change_type=DELETED created?
+
+Yes. areaVersionRepository.save(new AreaVersion(area, newVersion, area.getName(), area.getGeometry(), area.getAreaKm2(), AreaStatus.DELETED, ChangeType.DELETED, deletedBy)) is called after the conditional update succeeds. It records the exact name, geometry, area_km2, and actor at the deletion point.
+
+4. Is version incremented?
+
+Yes. The conditionalDelete SQL increments current_version atomically, and the AreaVersion row is saved at the new version number.
+
+5. Does the normal viewport query exclude DELETED Areas?
+
+Yes. AreaRepository.findActiveInViewport() has status = 'ACTIVE' hardcoded in the native query. There is no code path in the viewport flow that returns DELETED areas.
+
+6. Are DELETED Areas accessible through any existing REST endpoint?
+
+Only indirectly. GET /workspaces/{workspaceId}/areas/{areaId}/versions calls areaRepository.findById(areaId) with no status filter, then areaVersionRepository.findByAreaIdOrderByVersionDesc(areaId). A client that already knows the area ID can retrieve its full version history including the DELETED AreaVersion. There is no endpoint to list or enumerate deleted areas, and there is no GET /workspaces/{workspaceId}/areas/{areaId} to retrieve a single area by ID.
+
+7. Can the frontend currently discover a deleted Area after it disappears?
+
+No. The only mechanism to interact with a just-deleted area is the deletedArea state held in MapComponent, which is set during the user's own deleteArea() call in the current session. After:
+- dismissing the "Area Deleted" panel (dismissDeleted())
+- navigating away (page reload)
+- another user performing the delete (via WebSocket → loadViewport())
+
+there is no way to find a deleted area in the current frontend. The viewport query returns only ACTIVE areas.
+
+8. Is Restore currently reachable from the UI after deletion?
+
+Only immediately after the initiating user performs the delete in the current browser session. The "Area Deleted" panel (@if (deletedArea)) is shown only when deletedArea is set, which happens only in the deleteArea() success handler. There is no Deleted Areas list, no search, and no way to reach the restore endpoint from the UI once the panel is dismissed or the session refreshed. Restore is functionally unreachable for any delete performed by another user, any delete in a prior session, or any delete whose panel was dismissed.
+
+---
+Part 2 — Current Frontend Layout
+
+The map currently has:
+- Top-left floating buttons: basemap switcher (Map / Satellite)
+- Top-right floating button: Sign out
+- Bottom-left panel: Presence panel (active users)
+- Center: Leaflet draw controls
+- Contextual floating panels (mutually exclusive): New Area save, Edit Area, Version History, Area Deleted (just-deleted single area)
+
+All contextual panels are implemented as absolute-positioned overlays via Angular control-flow @if blocks in map.html. There is no side drawer, no tabs, and no modal library.
+
+---
+Part 3 — Retrieving Deleted Areas
+
+Recommended API: Option A
+
+GET /workspaces/{workspaceId}/areas/deleted
+
+Reasoning: The normal viewport endpoint contract (GET /workspaces/{workspaceId}/areas?bbox=...) must remain unchanged — it is explicitly ACTIVE-only and driven by a mandatory bbox param. Option B (?status=DELETED) would require making bbox optional or branching the endpoint behavior, which changes the existing contract. Option A is a dedicated endpoint for a distinct access pattern (management, not viewport rendering).
+
+Recommended response DTO: DeletedAreaResponse
+
+record DeletedAreaResponse(
+    UUID id,
+    UUID workspaceId,
+    String name,
+    int currentVersion,
+    Instant deletedAt
+)
+
+No geometry. The Deleted Areas panel renders a list, not polygons. Excluding geometry keeps the payload small and avoids loading irrelevant data. currentVersion is needed as the expectedVersion argument for both Restore and Permanent Delete.
+
+How to determine deletedAt
+
+The area table has no deleted_at column — only created_at. The deletion timestamp must come from the AreaVersion record. Every successful soft delete creates exactly one AreaVersion with changeType = DELETED (this is invariant from the service code). The correct query: for each DELETED area, find the AreaVersion with the highest version number (which will have change_type = DELETED since the area's current_version always points to the deletion entry). This can be implemented as a JOIN:
+
+SELECT a.id, a.workspace_id, a.name, a.current_version, av.created_at AS deleted_at
+FROM area a
+JOIN area_version av ON av.area_id = a.id AND av.version = a.current_version
+WHERE a.workspace_id = :workspaceId AND a.status = 'DELETED'
+ORDER BY av.created_at DESC
+
+This is a guaranteed single join because area_version(area_id, version) has a unique constraint uq_area_version. No new columns are needed.
+
+---
+Part 4 — Restore
+
+Backend flow: unchanged
+
+POST /workspaces/{workspaceId}/areas/{areaId}/versions/{version}/restore already handles the full restore semantics. After a successful restore:
+- Area status becomes ACTIVE
+- A new AreaVersion with ChangeType.RESTORED is appended
+- AREA_RESTORED event is broadcast via WebSocket
+- All connected clients' handleRealtimeEvent() calls loadViewport(), which loads the area if it is now in the viewport
+
+Target version for Deleted Areas panel restore
+
+The frontend should restore to currentVersion - 1 (the last committed state before the deletion). This is the same logic as the existing restoreDeletedArea() method. It works for multiply-deleted areas too: if the lifecycle is v1=CREATED, v2=DELETED, v3=RESTORED, v4=DELETED, then currentVersion - 1 = 3 (the RESTORED ACTIVE version), which is correct.
+
+Restored area outside viewport
+
+If the restored area's geometry does not intersect the current viewport, loadViewport() simply won't include it in the response — the area is not rendered. This is correct behavior. The area is in the database as ACTIVE; it will appear the next time the user pans to its location.
+
+After restore: Deleted Areas panel update
+
+The panel should remove the restored area from its list immediately (client-side removal on success), without waiting for a WebSocket event. Other clients with the panel open will receive the AREA_RESTORED WebSocket event; they can reload the deleted list on AREA_RESTORED (the area is no longer DELETED).
+
+---
+Part 5 — Permanent Delete
+
+Recommended endpoint
+
+DELETE /workspaces/{workspaceId}/areas/{areaId}/permanent
+
+This follows the existing REST convention (resource sub-action as a path suffix). DELETE is semantically correct. Alternatives like POST .../purge diverge from the established HTTP method convention used in the rest of the API.
+
+Preconditions
+
+1. Workspace must exist (same workspaceRepository.findById check as all area endpoints)
+2. Area must exist (areaRepository.findById → AreaNotFoundException if not found)
+3. Area must belong to the workspace (same cross-check as existing endpoints → AreaNotFoundException)
+4. Area must have status == DELETED → if ACTIVE, return 409 AREA_NOT_DELETED (new exception + error code)
+
+No expectedVersion OCC is needed for permanent delete. The status == DELETED guard is sufficient: if the area was restored between the client seeing it as DELETED and submitting the permanent delete, it will be ACTIVE and the call is rejected with 409. This is consistent and predictable without adding OCC.
+
+---
+Part 6 — Confirmation UX
+
+The existing confirmation pattern is window.confirm(), used in restoreHistoricalVersion():
+
+const confirmed = confirm(`Restore to version ${version.version}...`);
+if (!confirmed) return;
+
+Permanent delete should use the same pattern:
+
+const confirmed = confirm(
+  `Delete "${area.name}" permanently?\n\n` +
+  `This permanently deletes the area and its version history.\n` +
+  `This action cannot be undone.`
+);
+if (!confirmed) return;
+
+No modal library needed. No new dependency.
+
+---
+Part 7 — AreaVersion FK behavior
+
+The DB schema in V2__core_schema.sql defines:
+
+CONSTRAINT fk_area_version_area FOREIGN KEY (area_id) REFERENCES area (id)
+
+No ON DELETE CASCADE clause. PostgreSQL default FK behavior without an explicit action is NO ACTION, which is functionally equivalent to RESTRICT — it rejects the parent deletion if child rows exist.
+
+Answers:
+
+1. Physical deletion of Area row today: Rejected with FK constraint violation if any area_version rows exist for that area.
+2. ON DELETE CASCADE? No — not in the schema.
+3. JPA cascade/orphanRemoval? None. Area has no @OneToMany collection of AreaVersion. AreaVersion.area is @ManyToOne with no cascade. JPA will not cascade anything.
+4. Would AreaVersion rows survive? The deletion would be rejected before any rows are modified.
+5. Would the FK reject the deletion? Yes.
+6. Migration required? A migration is required — but not to add ON DELETE CASCADE. The preferred approach is to explicitly delete AreaVersion rows in the service before deleting the Area row. This is more readable and keeps the deletion semantics explicit in code. The existing schema does not need to change. No new migration is needed for the FK — the service will perform the two deletes in the correct order within a single transaction.
+
+Implementation sequence in permanentDeleteArea():
+// Within @Transactional
+areaVersionRepository.deleteAllByAreaId(areaId);  // new repo method
+areaRepository.deleteById(areaId);
+
+This requires adding deleteAllByAreaId(UUID areaId) to AreaVersionRepository — a derived delete method that Spring Data resolves to DELETE FROM area_version WHERE area_id = :areaId.
+
+---
+Part 8 — Audit semantics
+
+Current DESIGN.md (Section "Audit Trail") states:
+
+▎ "AreaVersion is the persistent audit trail for Area Mutations. It combines two responsibilities in a single append-only record."
+
+and
+
+▎ "AreaVersion is append-only. Existing AreaVersion records are not modified."
+
+These statements need a bounded qualification. With permanent deletion:
+
+- While an Area exists: AreaVersion is append-only. Records are never modified or deleted.
+- Permanent deletion: an explicit user action that physically removes both the Area row and all its associated AreaVersion rows. After permanent deletion, no records remain for that Area.
+
+DESIGN.md must be updated to state:
+
+▎ "AreaVersion is append-only for retained Areas. Explicit permanent deletion by the user physically removes both the Area row and all its associated AreaVersion rows. The audit trail is therefore scoped to Areas that have not been permanently deleted."
+
+This is not a contradiction — it is a bounded guarantee. The word "immutable" as applied to individual AreaVersion records remains correct (no AreaVersion row is ever modified), but the guarantee that records are never deleted must be dropped in favor of the narrower scoped statement.
+
+---
+Part 9 — PURGED status/change_type
+
+No PURGED change type or status should be added.
+
+Rationale: a hypothetical PURGED AreaVersion entry would be created immediately before permanent deletion, then deleted in the same transaction. It would never be visible to any query. Its only purpose would be to satisfy metrics or observability, but a separate metric counter (area.permanent.deletions.total) achieves that without schema changes. The chk_area_version_change_type CHECK constraint would require a migration to add PURGED, and the AreaMetricsListener would need updating to recognize it. None of this is warranted.
+
+---
+Part 10 — WebSocket behavior
+
+Recommended approach: Broadcast AREA_PERMANENTLY_DELETED
+
+When Alice permanently deletes Area X and Bob also has the Deleted Areas panel open, Bob should not continue showing Area X as restorable indefinitely. The cleanest solution is to broadcast a new AREA_PERMANENTLY_DELETED event after commit.
+
+Event shape: AreaEventMessage("AREA_PERMANENTLY_DELETED", workspaceId, timestamp, payload) where payload is the area data captured before deletion (the area still exists at the point the service runs, so we can read it). The frontend only needs the id from the payload to remove the area from the deleted list.
+
+Frontend handleRealtimeEvent() must be updated:
+- For AREA_PERMANENTLY_DELETED: do NOT call loadViewport() (the area was not in the normal map state). Instead, if the Deleted Areas panel is loaded, remove the area with that ID from the list.
+- For all other event types: existing behavior unchanged.
+
+Why not reuse AREA_DELETED? AREA_DELETED currently triggers loadViewport() which correctly removes a just-soft-deleted area from the normal map. If AREA_PERMANENTLY_DELETED reused this type, clients would needlessly reload the viewport for an area that was already absent from the normal map.
+
+AreaEventMessage record can be reused — the type field is a String, so adding "AREA_PERMANENTLY_DELETED" requires no Java model change. The AreaMetricsListener.mapToChangeType() default case returns null for unknown types, so the existing metrics listener will silently ignore it (which is correct — we track permanent deletions via a separate counter).
+
+---
+Part 11 — Concurrency
+
+Restore vs permanent delete (race)
+
+- Alice: conditionalRestore() → status becomes ACTIVE, version incremented → commit
+- Bob (permanent delete, arrives after Alice commits): finds area.status == ACTIVE → 409 AREA_NOT_DELETED
+- Bob (permanent delete arrives before Alice commits): service checks status == DELETED → passes → acquires row lock via deleteById. Alice's conditionalRestore arrives → tries to update row → row is gone after Bob commits → areaRepository.findById(areaId) throws AreaNotFoundException → Bob's response 200, Alice's restore gets 404 AREA_NOT_FOUND (or rather AREA_VERSION_NOT_FOUND if the version lookup runs first). This edge case is acceptable — the later transaction loses.
+
+In practice, both operations are short transactions and the status check + status precondition enforce correct behavior for the common cases.
+
+Two simultaneous permanent deletes
+
+Both read status == DELETED, proceed. First to commit: deletes AreaVersion rows, then Area row. Second: areaRepository.findById(areaId) finds nothing → throws AreaNotFoundException → 404 AREA_NOT_FOUND. One succeeds, one gets 404 — correct and acceptable.
+
+Stale Deleted Areas panel (restore before permanent delete)
+
+User sees Area at version 5 (DELETED). Another user restores it (version becomes 6, status=ACTIVE). User submits permanent delete: service checks status == DELETED → ACTIVE → 409 AREA_NOT_DELETED. Frontend should handle this 409 gracefully and reload the deleted areas list.
+
+OCC for permanent delete: Not needed. The status == DELETED guard is sufficient. It provides the same logical protection as OCC for this specific operation.
+
+---
+Part 12 — Authorization
+
+Permanent delete requires authentication: @AuthenticationPrincipal Jwt jwt in the controller method, consistent with all existing mutation endpoints.
+
+Workspace validation follows the exact same pattern as existing area mutations:
+1. workspaceRepository.findById(workspaceId).orElseThrow(WorkspaceNotFoundException::new)
+2. areaRepository.findById(areaId).orElseThrow(AreaNotFoundException::new)
+3. if (!workspaceId.equals(area.getWorkspace().getId())) throw new AreaNotFoundException(areaId)
+
+A user cannot permanently delete an area from an arbitrary workspace — the workspace ID in the path is validated against the actual area FK, same as soft delete.
+
+---
+Part 13 — Rate limiting
+
+The DrawingRateLimitInterceptor currently matches:
+
+new String[]{"DELETE", "/workspaces/*/areas/*"},
+
+The pattern /workspaces/*/areas/* with AntPathMatcher matches single-segment wildcards. The permanent delete path is DELETE /workspaces/{id}/areas/{areaId}/permanent, which has one extra segment — the existing pattern does not match it.
+
+Permanent delete must be added to MUTATION_PATTERNS:
+
+new String[]{"DELETE", "/workspaces/*/areas/*/permanent"}
+
+This is consistent with the existing principle: all Area state mutations are rate-limited.
+
+Restore is already rate-limited (POST /workspaces/*/areas/*/versions/*/restore). No change needed there.
+
+---
+Part 14 — Metrics
+
+Recommendation: Option B — a separate counter area.permanent.deletions.total
+
+Rationale:
+- Adding PURGED to ChangeType would require: a DB migration to update chk_area_version_change_type, a new enum value, updating AreaMetricsListener's pre-registration loop, and matching frontend AreaVersionResponse.changeType type
+- All of this complexity for a change_type that never appears in a persisted AreaVersion (since we don't create a PURGED AreaVersion)
+- A single pre-registered Micrometer Counter named area.permanent.deletions.total in the permanent delete service method (or a dedicated @TransactionalEventListener if a new event is published) is the minimal, correct solution
+
+No new dependency is needed — Micrometer is already used throughout the codebase.
+
+---
+Part 15 — Geographic cache
+
+No impact. Task 18 decision stands: defer caching entirely.
+
+---
+Part 16 — Retention semantics
+
+The proposed policy is valid and coherent for a prototype:
+
+┌─────────────────────────────────┬─────────────────────────────────────────────────────────────────────────────────┐
+│           Area state            │                                    Retention                                    │
+├─────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────┤
+│ ACTIVE                          │ Retained normally; visible in viewport                                          │
+├─────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────┤
+│ DELETED                         │ Retained indefinitely; not visible in viewport; restorable via Deleted Areas UI │
+├─────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────┤
+│ Permanently deleted             │ Area row and all AreaVersion rows physically removed; not recoverable           │
+├─────────────────────────────────┼─────────────────────────────────────────────────────────────────────────────────┤
+│ AreaVersion (for retained Area) │ Retained while Area exists; append-only                                         │
+└─────────────────────────────────┴─────────────────────────────────────────────────────────────────────────────────┘
+
+No scheduled cleanup, no time-based expiry, no automatic purge.
+
+Production evolution would add:
+- Configurable retention period for DELETED areas (e.g., purge after 90 days)
+- Scheduled cleanup job
+- Archival to cold storage
+- Compliance-driven retention rules (GDPR right-to-erasure may require different semantics)
+- Admin console with bulk purge
+- Audit-log service (if permanent deletion must itself be audited externally)
+
+None of these belong in the prototype.
+
+---
+Items 30–37 (Files, Migration, Tests, Docs)
+
+30. Exact backend files to create/modify
+
+New files:
+- backend/.../area/dto/DeletedAreaResponse.java — new DTO record
+- backend/.../common/exception/AreaNotDeletedException.java — new exception for DELETE /permanent of ACTIVE area
+
+Modified files:
+- backend/.../area/AreaController.java — add GET /deleted and DELETE /{areaId}/permanent endpoints
+- backend/.../area/AreaService.java — add findDeleted() and permanentDeleteArea() methods
+- backend/.../area/AreaRepository.java — add findDeletedByWorkspaceId() (native query returning deleted areas with deletedAt from join)
+- backend/.../area/AreaVersionRepository.java — add deleteAllByAreaId(UUID areaId)
+- backend/.../common/web/GlobalExceptionHandler.java — add handler for AreaNotDeletedException → 409 AREA_NOT_DELETED
+- backend/.../ratelimit/DrawingRateLimitInterceptor.java — add DELETE /workspaces/*/areas/*/permanent to MUTATION_PATTERNS
+- backend/.../metrics/AreaMetricsListener.java — register area.permanent.deletions.total counter (or handled in service; either works)
+- backend/.../realtime/AreaEventMessage.java or AreaEventRelay.java — no structural change needed; AREA_PERMANENTLY_DELETED is a new string value for the existing type field
+
+31. Exact frontend files to create/modify
+
+Modified files:
+- frontend/.../area/area.service.ts — add getDeletedAreas() and permanentDeleteArea() methods
+- frontend/.../area/area.model.ts — add DeletedArea interface; add 'AREA_PERMANENTLY_DELETED' to AreaEventMessage.type
+- frontend/.../map/map.ts — add Deleted Areas panel state and logic: deletedAreas, deletedAreasLoading, deletedAreasPanelOpen; add loadDeletedAreas(), openDeletedAreas(), closeDeletedAreas(), permanentDelete(area), restoreFromDeletedList(area); update handleRealtimeEvent() to handle AREA_PERMANENTLY_DELETED
+- frontend/.../map/map.html — add "Deleted Areas" toggle button; add deleted areas panel template
+- frontend/.../map/map.css — add styles for deleted areas panel and button
+
+32. DB migrations required
+
+No new migration file is needed. The preferred implementation (delete AreaVersion rows in the service before deleting the Area row) works with the existing schema without changing the FK definition. The new endpoint, new DTO, and new repository method all work within the existing schema.
+
+No deleted_at column is added to the area table — it is derived from the AreaVersion join.
+
+33. Tests to add/modify
+
+New test class: DeletedAreasIntegrationTest (TC-DELETED-001 through TC-DELETED-003, TC-RESTORE from Deleted panel)
+
+New test class: PermanentDeleteIntegrationTest (TC-PURGE-001 through TC-PURGE-008)
+
+Both follow the established @SpringBootTest(RANDOM_PORT) + @Testcontainers + @ActiveProfiles("test") pattern.
+
+Modified AreaDeleteRestoreIntegrationTest — no existing tests need changing; the new tests are additive.
+
+Modified DrawingRateLimitIntegrationTest — add a case verifying permanent delete is rate-limited.
+
+Modified MetricsIntegrationTest — add a case verifying area.permanent.deletions.total is incremented after permanent delete.
+
+34. Documentation changes
+
+- docs/DESIGN.md — add: Area lifecycle section (ACTIVE → DELETED → ACTIVE; DELETED → physically removed); retention semantics; bounded audit-trail guarantee; permanent delete concurrency semantics; no scheduled cleanup
+- docs/TEST_CASES.md — add TC-DELETED-001–003 and TC-PURGE-001–008; add manual UI test cases
+- README.md — update features table (add "Deleted Areas management", "Permanent delete"); add data retention section; update test count and test class table; update API overview
+
+35. Dependencies required
+
+None. All required capabilities (JPA derived delete, Micrometer counter, existing WebSocket relay) are already in the project.
+
+36. Known limitations
+
+- currentVersion - 1 as the auto-selected restore target works correctly for the common lifecycle but the UI should ideally let the user choose a target version from the Deleted Areas panel (deferred; the restore-from-history flow already handles arbitrary versions)
+- Permanent delete of an area that was deleted by another user and is currently in another user's "just-deleted" panel will leave a stale single-area panel; the AREA_PERMANENTLY_DELETED WebSocket event handles the general multi-user case but not the specific deletedArea panel state (this panel already has a "Dismiss" button; the user can dismiss if the restore fails with 404)
+- Single-instance presence limitation applies here too: AREA_PERMANENTLY_DELETED events will not reach clients connected to a different backend instance (existing limitation documented in DESIGN.md)
+
+37. Implementation sequence
+
+1. Add AreaNotDeletedException exception and handler in GlobalExceptionHandler
+2. Add DeletedAreaResponse DTO
+3. Add findDeletedByWorkspaceId() to AreaRepository (native SQL with JOIN to area_version)
+4. Add deleteAllByAreaId() to AreaVersionRepository
+5. Add findDeleted() and permanentDeleteArea() to AreaService
+6. Add GET /deleted and DELETE /{areaId}/permanent to AreaController
+7. Add permanent delete pattern to DrawingRateLimitInterceptor
+8. Add area.permanent.deletions.total counter (in service or metrics listener)
+9. Write backend integration tests (DeletedAreasIntegrationTest, PermanentDeleteIntegrationTest)
+10. Run full backend test suite
+11. Update frontend area.model.ts and area.service.ts
+12. Update map.ts, map.html, map.css (Deleted Areas panel + permanent delete flow)
+13. Update handleRealtimeEvent() for AREA_PERMANENTLY_DELETED
+14. Manual frontend verification
+15. Update docs/DESIGN.md, docs/TEST_CASES.md, README.md
+
+---
+Explicit Answers
+
+A. Can a normal user currently restore an Area after deleting it?
+
+Only if they do so immediately, in the same browser session, without dismissing the "Area Deleted" panel. There is no way to find a deleted area after the panel is dismissed, after a page reload, or if another user performed the delete. Restore is functionally not reliably usable today.
+
+B. How will a user find deleted Areas after Task 19?
+
+Via a "Deleted Areas" button/panel on the map that fetches GET /workspaces/{workspaceId}/areas/deleted and shows a list of deleted areas with name, deletion date, and Restore / Delete permanently actions.
+
+C. Is soft-deleted data automatically expired?
+
+No. DELETED Areas are retained indefinitely. No scheduled cleanup job exists or will be added in this task.
+
+D. What exactly does "Delete permanently" remove?
+
+All area_version rows with area_id = :areaId, then the area row itself. No data for that area remains in the database.
+
+E. Can an ACTIVE Area be permanently deleted directly?
+
+No. Permanent delete checks area.status == DELETED and returns 409 AREA_NOT_DELETED if the area is ACTIVE. The two-step lifecycle (soft delete first, permanent delete second) is enforced.
+
+F. Does permanent deletion preserve or destroy AreaVersion history?
+
+Destroys it. All associated AreaVersion rows are explicitly deleted (via deleteAllByAreaId) before the Area row is deleted, within the same transaction.
+
+G. Is PURGED a database status?
+
+No. AreaStatus remains {ACTIVE, DELETED}. No PURGED status, no PURGED change_type. No schema migration is needed.
+
+H. Is a scheduled cleanup job required?
+
+No. The retention policy is: DELETED areas are retained indefinitely until the user explicitly chooses "Delete permanently". No scheduled job, no time-based expiry.
+
+I. How are two clients kept consistent when one restores or permanently deletes an Area?
+
+Restore: broadcasts existing AREA_RESTORED event → all clients call loadViewport() → area appears on map if in viewport; other clients with Deleted Areas panel open reload the list on AREA_RESTORED (area disappears from the list since it is now ACTIVE).
+
+Permanent delete: broadcasts new AREA_PERMANENTLY_DELETED event → clients with Deleted Areas panel open remove the area from the list; normal map clients ignore the event (the area was not in their viewport state anyway).
+
+J. Does Task 19 require a database migration?
+
+No. The implementation uses the existing schema. No new columns, no FK changes, no CHECK constraint additions. The deletedAt timestamp is derived from the AreaVersion join. The permanent delete is handled in the service (delete children first, then parent) without requiring ON DELETE CASCADE.
+
+K. Does Task 19 require any new dependency?
+
+No. All capabilities (JPA, Micrometer, existing WebSocket infrastructure, Spring REST) are already present.
+
+---
+
+
+The Task 19 plan is approved with the following corrections before implementation.
+
+1. Permanent Delete must participate in optimistic concurrency.
+
+Do NOT rely only on:
+
+    status == DELETED
+
+The DeletedAreaResponse already contains currentVersion.
+
+Use that version as expectedVersion for permanent deletion.
+
+This race must be protected:
+
+    Alice sees:
+        DELETED v5
+
+    Bob:
+        RESTORE -> v6 ACTIVE
+        DELETE  -> v7 DELETED
+
+    Alice:
+        permanently deletes stale v5
+
+Checking only status == DELETED would incorrectly delete the new v7 state.
+
+Permanent deletion must therefore verify:
+
+    workspace_id
+    area_id
+    status == DELETED
+    current_version == expectedVersion
+
+If the version is stale, return the project's existing VERSION_CONFLICT
+semantics rather than deleting the Area.
+
+Choose an API shape consistent with the existing mutation API for passing
+expectedVersion.
+
+2. Re-evaluate the permanent-delete transaction for atomicity.
+
+The proposed:
+
+    deleteAllByAreaId(areaId)
+    areaRepository.deleteById(areaId)
+
+must not introduce a check-then-act race between validation and physical
+deletion.
+
+Follow the same concurrency philosophy already used by conditionalDelete()
+and conditionalRestore().
+
+Design the smallest transactional implementation that guarantees that the
+Area being physically removed is still the expected DELETED version.
+
+Do not introduce distributed locks or unnecessary pessimistic locking.
+
+3. AREA_PERMANENTLY_DELETED must also clear the existing just-deleted UI.
+
+If another client permanently deletes an Area while this client still has
+the existing deletedArea/"Area Deleted" panel open for that Area:
+
+    if deletedArea.id == permanentlyDeletedAreaId
+        clear deletedArea
+
+Do not leave a known stale panel and document it as a limitation when the
+new WebSocket event already provides enough information to fix it.
+
+4. Keep the other approved decisions:
+
+- GET /workspaces/{workspaceId}/areas/deleted
+- lightweight DeletedAreaResponse without geometry
+- deletedAt derived from the current DELETED AreaVersion
+- no deleted_at DB column
+- Deleted Areas UI
+- Restore from Deleted Areas
+- explicit confirmation before permanent delete
+- permanent delete allowed only from DELETED state
+- physical deletion removes Area + AreaVersion history
+- no PURGED status
+- no PURGED ChangeType
+- AREA_PERMANENTLY_DELETED WebSocket event
+- permanent delete participates in mutation rate limiting
+- separate area.permanent.deletions.total metric
+- no scheduled purge
+- DELETED Areas retained indefinitely until Restore or explicit permanent delete
+- no new dependencies
+- no DB migration unless the corrected atomic/OCC implementation proves one
+  is actually necessary
+
+Update the proposed tests to include the important ABA-style stale version
+case:
+
+    DELETED v5
+    -> RESTORED v6
+    -> DELETED v7
+    -> permanent-delete request with expectedVersion=5
+    -> 409 VERSION_CONFLICT
+    -> Area v7 remains DELETED and recoverable
+
+After incorporating these corrections, proceed with implementation.
+
+Run the complete backend test suite and frontend production build.
+
+Update README.md, docs/DESIGN.md, and docs/TEST_CASES.md.
+
+Report:
+- final API contracts
+- permanent-delete transaction/OCC implementation
+- final retention semantics
+- final audit semantics
+- WebSocket behavior
+- tests added
+- total test count
+- any deviations from the approved plan
+
+---
+Final Report
+
+API contracts
+
+┌────────┬─────────────────────────────────────────────────────────────┬───────────────────────────────────────────────────────────────────────────┐
+│ Method │                            Path                             │                                   Notes                                   │
+├────────┼─────────────────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────┤
+│ GET    │ /workspaces/{wid}/areas/deleted                             │ Returns [{id, workspaceId, name, currentVersion, deletedAt}]; no geometry │
+├────────┼─────────────────────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────┤
+│ DELETE │ /workspaces/{wid}/areas/{aid}/permanent?expectedVersion={n} │ Returns last DELETED AreaResponse; requires auth                          │
+└────────┴─────────────────────────────────────────────────────────────┴───────────────────────────────────────────────────────────────────────────┘
+
+Error codes added: AREA_NOT_DELETED (409) — returned when permanent delete is attempted on an ACTIVE area.
+
+Permanent-delete transaction / OCC
+
+The service follows the same OCC pattern used by conditionalDelete and conditionalRestore:
+
+1. Read and validate the Area (workspace scope, status == DELETED). If ACTIVE → AreaNotDeletedException (409).
+2. Capture AreaResponse from the pre-deletion state.
+3. deleteAllVersionsByAreaId(areaId) — native DELETE FROM area_version WHERE area_id = :areaId within the transaction.
+4. conditionalPermanentDelete(areaId, workspaceId, expectedVersion) — native DELETE FROM area WHERE id=… AND workspace_id=… AND status='DELETED' AND current_version=:expectedVersion, annotated @Modifying(clearAutomatically = true). Returns affected row count.
+5. If 0 rows: transaction rolls back (restoring the versions), re-reads the area with a fresh DB query (persistence context was cleared), and throws VersionConflictException (409).
+6. If 1 row: publishes AREA_PERMANENTLY_DELETED event via @TransactionalEventListener(AFTER_COMMIT).
+
+The @Modifying(clearAutomatically = true) on the conditional delete guarantees the re-read in step 5 goes to the database rather than the Hibernate first-level cache. The ABA case (DELETED v5 → RESTORED v6 → DELETED v7 → permanent-delete with expectedVersion=5) is covered by TC-PURGE-007 and returns 409 VERSION_CONFLICT with the area intact.
+
+No ON DELETE CASCADE migration was needed. The service deletes child rows first explicitly, which is consistent with the rest of the codebase's explicit persistence philosophy.
+
+Retention semantics
+
+┌─────────────────────┬────────────────────────────────────────────────────┐
+│        State        │                      Behavior                      │
+├─────────────────────┼────────────────────────────────────────────────────┤
+│ ACTIVE              │ Retained; visible in viewport                      │
+├─────────────────────┼────────────────────────────────────────────────────┤
+│ DELETED             │ Retained indefinitely; not in viewport; restorable │
+├─────────────────────┼────────────────────────────────────────────────────┤
+│ Permanently deleted │ Area row + all AreaVersion rows physically removed │
+├─────────────────────┼────────────────────────────────────────────────────┤
+│ Automatic expiry    │ None                                               │
+└─────────────────────┴────────────────────────────────────────────────────┘
+
+Audit semantics
+
+AreaVersion is append-only for retained areas. Explicit permanent deletion physically removes both the Area row and all its AreaVersion rows within the same transaction. The audit guarantee is scoped to retained areas; it does not constitute a globally immutable ledger. DESIGN.md's Versioning and Audit Trail sections are updated to state this boundary explicitly.
+
+No PURGED status or PURGED ChangeType was introduced.
+
+WebSocket behavior
+
+AREA_PERMANENTLY_DELETED is broadcast after commit via the existing AreaEventRelay. Frontend handleRealtimeEvent() handles it without calling loadViewport() (the area was not in normal map state). It:
+- Clears the just-deleted single-area panel (deletedArea) if its ID matches (correction #3).
+- Filters the area out of the Deleted Areas panel list if the panel is open.
+
+AREA_RESTORED also filters the restored area out of the Deleted Areas panel list on other clients.
+
+Tests added
+
+┌────────────────────────────────┬───────┬───────────────────────────────────────────────────┐
+│             Class              │ Tests │                     Coverage                      │
+├────────────────────────────────┼───────┼───────────────────────────────────────────────────┤
+│ DeletedAreasIntegrationTest    │ 5     │ TC-DELETED-001–005                                │
+├────────────────────────────────┼───────┼───────────────────────────────────────────────────┤
+│ PermanentDeleteIntegrationTest │ 10    │ TC-PURGE-001–010 including ABA stale-version case │
+└────────────────────────────────┴───────┴───────────────────────────────────────────────────┘
+
+Total: 146 integration tests, 0 failures (previously 131).
+
+Deviations from approved plan
+
+None. All four corrections were applied:
+1. OCC via expectedVersion query param, enforced by conditionalPermanentDelete.
+2. Atomic transaction: delete versions first, then conditional delete of Area in one transaction with rollback on version conflict.
+3. AREA_PERMANENTLY_DELETED clears the deletedArea just-deleted panel.
+4. All other approved decisions preserved unchanged.
+

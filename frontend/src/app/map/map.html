@@ -15,6 +15,7 @@
   </div>
 
   <button class="logout-btn" (click)="logout()">Sign out</button>
+  <button class="deleted-areas-btn" (click)="openDeletedAreas()">Deleted Areas</button>
 
   @if (activeUsers.size > 0) {
     <div class="presence-panel">
@@ -136,6 +137,49 @@
         <button class="btn btn-secondary" (click)="closeHistory()" [disabled]="historySaving">
           Close
         </button>
+      </div>
+    </div>
+  }
+
+  @if (deletedAreasPanelOpen) {
+    <div class="area-panel deleted-areas-panel">
+      <div class="area-panel-title">Deleted Areas</div>
+      @if (deletedAreasLoading) {
+        <div class="history-loading">Loading…</div>
+      }
+      @if (!deletedAreasLoading) {
+        @if (deletedAreas.length === 0) {
+          <div class="deleted-areas-empty">No deleted areas.</div>
+        }
+        @if (deletedAreas.length > 0) {
+          <div class="deleted-areas-list">
+            @for (area of deletedAreas; track area.id) {
+              <div class="deleted-area-row">
+                <div class="deleted-area-name">{{ area.name }}</div>
+                <div class="deleted-area-meta">Deleted: {{ area.deletedAt | date: 'yyyy-MM-dd' }}</div>
+                <div class="deleted-area-row-actions">
+                  <button
+                    class="btn btn-secondary"
+                    [disabled]="deletedAreaProcessingId === area.id"
+                    (click)="restoreFromDeletedList(area)"
+                  >
+                    {{ deletedAreaProcessingId === area.id ? '…' : 'Restore' }}
+                  </button>
+                  <button
+                    class="btn btn-danger"
+                    [disabled]="deletedAreaProcessingId === area.id"
+                    (click)="permanentDeleteArea(area)"
+                  >
+                    {{ deletedAreaProcessingId === area.id ? '…' : 'Delete permanently' }}
+                  </button>
+                </div>
+              </div>
+            }
+          </div>
+        }
+      }
+      <div class="area-panel-actions">
+        <button class="btn btn-secondary" (click)="closeDeletedAreas()">Close</button>
       </div>
     </div>
   }

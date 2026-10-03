@@ -41,6 +41,7 @@ public class DrawingRateLimitInterceptor implements HandlerInterceptor {
             new String[]{"POST",   "/workspaces/*/areas"},
             new String[]{"PUT",    "/workspaces/*/areas/*"},
             new String[]{"DELETE", "/workspaces/*/areas/*"},
+            new String[]{"DELETE", "/workspaces/*/areas/*/permanent"},
             new String[]{"POST",   "/workspaces/*/areas/*/versions/*/restore"}
     );
 

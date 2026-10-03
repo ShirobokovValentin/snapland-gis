@@ -3,12 +3,14 @@ package com.snapland.gis.area;
 import com.snapland.gis.area.dto.AreaResponse;
 import com.snapland.gis.area.dto.AreaVersionResponse;
 import com.snapland.gis.area.dto.CreateAreaRequest;
+import com.snapland.gis.area.dto.DeletedAreaResponse;
 import com.snapland.gis.area.dto.GeoJsonGeometry;
 import com.snapland.gis.area.dto.RestoreAreaRequest;
 import com.snapland.gis.area.dto.UpdateAreaRequest;
 import com.snapland.gis.realtime.AreaEventMessage;
 import com.snapland.gis.common.exception.AreaDeletedException;
 import com.snapland.gis.common.exception.AreaNotFoundException;
+import com.snapland.gis.common.exception.AreaNotDeletedException;
 import com.snapland.gis.common.exception.AreaVersionNotFoundException;
 import com.snapland.gis.common.exception.InvalidGeometryException;
 import com.snapland.gis.common.exception.VersionConflictException;
@@ -218,6 +220,66 @@ public class AreaService {
                 .stream()
                 .map(this::toVersionResponse)
                 .toList();
+    }
+
+    public List<DeletedAreaResponse> findDeleted(UUID workspaceId) {
+        workspaceRepository.findById(workspaceId)
+                .orElseThrow(() -> new WorkspaceNotFoundException(workspaceId));
+
+        return jdbcTemplate.query(
+                """
+                SELECT a.id, a.workspace_id, a.name, a.current_version, av.created_at AS deleted_at
+                FROM area a
+                JOIN area_version av ON av.area_id = a.id AND av.version = a.current_version
+                WHERE a.workspace_id = ?::uuid
+                  AND a.status = 'DELETED'
+                ORDER BY av.created_at DESC
+                """,
+                (rs, rowNum) -> new DeletedAreaResponse(
+                        UUID.fromString(rs.getString("id")),
+                        UUID.fromString(rs.getString("workspace_id")),
+                        rs.getString("name"),
+                        rs.getInt("current_version"),
+                        rs.getTimestamp("deleted_at").toInstant()
+                ),
+                workspaceId.toString()
+        );
+    }
+
+    @Transactional
+    public AreaResponse permanentDeleteArea(UUID workspaceId, UUID areaId, int expectedVersion,
+                                            UUID deletedByUserId) {
+        workspaceRepository.findById(workspaceId)
+                .orElseThrow(() -> new WorkspaceNotFoundException(workspaceId));
+
+        Area area = areaRepository.findById(areaId)
+                .orElseThrow(() -> new AreaNotFoundException(areaId));
+        if (!workspaceId.equals(area.getWorkspace().getId())) {
+            throw new AreaNotFoundException(areaId);
+        }
+        if (area.getStatus() == AreaStatus.ACTIVE) {
+            throw new AreaNotDeletedException(areaId);
+        }
+
+        // Capture response before deletion (area row is about to be removed)
+        AreaResponse response = toResponse(area);
+
+        // Delete all AreaVersion rows first (FK requires child rows removed before parent)
+        areaVersionRepository.deleteAllVersionsByAreaId(areaId);
+
+        // Atomic OCC delete: verifies status=DELETED and current_version=expectedVersion
+        int affected = areaRepository.conditionalPermanentDelete(areaId, workspaceId, expectedVersion);
+
+        if (affected == 0) {
+            // Persistence context was cleared by conditionalPermanentDelete (clearAutomatically=true)
+            Area current = areaRepository.findById(areaId)
+                    .orElseThrow(() -> new AreaNotFoundException(areaId));
+            throw new VersionConflictException(areaId, expectedVersion, current.getCurrentVersion());
+        }
+
+        eventPublisher.publishEvent(new AreaEventMessage(
+                "AREA_PERMANENTLY_DELETED", workspaceId.toString(), Instant.now().toString(), response));
+        return response;
     }
 
     public List<AreaResponse> findInViewport(UUID workspaceId, String bboxParam) {

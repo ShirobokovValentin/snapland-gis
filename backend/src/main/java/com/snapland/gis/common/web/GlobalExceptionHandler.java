@@ -4,6 +4,7 @@ import com.snapland.gis.common.exception.AreaDeletedException;
 import com.snapland.gis.common.exception.AreaNotFoundException;
 import com.snapland.gis.common.exception.AreaVersionNotFoundException;
 import com.snapland.gis.common.exception.InvalidGeometryException;
+import com.snapland.gis.common.exception.RateLimitExceededException;
 import com.snapland.gis.common.exception.UserAlreadyExistsException;
 import com.snapland.gis.common.exception.UserNotFoundException;
 import com.snapland.gis.common.exception.VersionConflictException;
@@ -11,6 +12,7 @@ import com.snapland.gis.common.exception.WorkspaceNotFoundException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.context.support.DefaultMessageSourceResolvable;
+import org.springframework.http.HttpHeaders;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.MethodArgumentNotValidException;
@@ -93,6 +95,16 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiError> handleUserNotFound(UserNotFoundException ex) {
         return ResponseEntity.status(HttpStatus.NOT_FOUND)
                 .body(ApiError.of("USER_NOT_FOUND", ex.getMessage(), traceId()));
+    }
+
+    @ExceptionHandler(RateLimitExceededException.class)
+    public ResponseEntity<ApiError> handleRateLimitExceeded(RateLimitExceededException ex) {
+        log.warn("Drawing action rate limit exceeded: {}", ex.getMessage());
+        HttpHeaders headers = new HttpHeaders();
+        headers.set("Retry-After", String.valueOf(ex.getRetryAfterSeconds()));
+        return ResponseEntity.status(HttpStatus.TOO_MANY_REQUESTS)
+                .headers(headers)
+                .body(ApiError.of("RATE_LIMIT_EXCEEDED", ex.getMessage(), traceId()));
     }
 
     @ExceptionHandler(IllegalArgumentException.class)

@@ -113,9 +113,8 @@ export class MapComponent implements AfterViewInit, OnDestroy {
       },
       error: (err) => {
         this.saving = false;
-        console.error('Failed to save area', err);
         this.cdr.detectChanges();
-        alert('Failed to save area. See console for details.');
+        this.handleMutationError(err, 'save area');
       },
     });
   }
@@ -153,8 +152,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
             this.clearEdit();
             this.loadViewport();
           } else {
-            console.error('Failed to update area', err);
-            alert('Failed to update area. See console for details.');
+            this.handleMutationError(err, 'update area');
           }
         },
       });
@@ -200,8 +198,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
           this.clearEdit();
           this.loadViewport();
         } else {
-          console.error('Failed to delete area', err);
-          alert('Failed to delete area. See console for details.');
+          this.handleMutationError(err, 'delete area');
         }
       },
     });
@@ -229,8 +226,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
           this.clearDeletedArea();
           this.loadViewport();
         } else {
-          console.error('Failed to restore area', err);
-          alert('Failed to restore area. See console for details.');
+          this.handleMutationError(err, 'restore area');
         }
       },
     });
@@ -314,8 +310,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
           this.clearHistory();
           this.loadViewport();
         } else {
-          console.error('Failed to restore version', err);
-          alert('Failed to restore version. See console for details.');
+          this.handleMutationError(err, 'restore version');
         }
       },
     });
@@ -502,6 +497,16 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     this.editHandler.enable();
 
     this.cdr.detectChanges();
+  }
+
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  private handleMutationError(err: any, action: string): void {
+    if (err.status === 429) {
+      alert('Too many drawing actions. Please wait a moment and try again.');
+    } else {
+      console.error(`Failed to ${action}`, err);
+      alert(`Failed to ${action}. See console for details.`);
+    }
   }
 
   private clearPending(): void {

@@ -150,6 +150,12 @@ expose health endpoints. Error logging and monitoring must be provided.
 >
 > A `DevTokenController` (active only under the `dev` Spring profile) issues JWTs for the seeded dev user without credential verification; it is development scaffolding and must not be deployed to production.
 
+> **Prototype Rate Limiting Note:** The full architecture applies rate limiting at the API Gateway, which can enforce limits across multiple backend instances using shared state. In this prototype there is no API Gateway, so a fixed-window per-user drawing action rate limiter is implemented directly in the GIS API Service as a Spring MVC `HandlerInterceptor` (`DrawingRateLimiter`, `DrawingRateLimitInterceptor`). State is held in a `ConcurrentHashMap` within a single JVM instance and is lost on application restart.
+>
+> The limiter enforces a maximum of `app.rate-limit.drawing-actions.max-actions` mutations (default: 50) per user per `app.rate-limit.drawing-actions.window` (default: `PT1M`). Covered mutation endpoints: `POST /workspaces/*/areas`, `PUT /workspaces/*/areas/*`, `DELETE /workspaces/*/areas/*`, `POST /workspaces/*/areas/*/versions/*/restore`. Read requests (`GET`) are not counted. Requests beyond the quota are rejected with `429 Too Many Requests` and a `Retry-After` header (ceiling seconds until the current window expires, minimum 1). Failed authenticated mutations (e.g., `400 INVALID_GEOMETRY`) count against the quota. Unauthenticated requests (`401`) consume no quota. The counter stays at `maxActions` for the remainder of the window — rejected requests do not increment it. A new window starts on the first request after the current window expires.
+>
+> Memory is proportional to the number of distinct users who have made mutation attempts in any window. Opportunistic cleanup runs every 128 operations to remove entries for expired windows. This is sufficient for a prototype; a production deployment should move rate limiting to the API Gateway with a shared backing store (e.g., Redis sliding window).
+
 ## Domain Entities
 
 User --- System user {id, name, email, created_at}

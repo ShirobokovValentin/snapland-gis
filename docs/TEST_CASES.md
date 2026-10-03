@@ -25,12 +25,11 @@ observed through its HTTP API and browser UI.
 - Area history panel in the browser with version preview and restore
 - Area persistence and reload
 - Real-time cross-browser synchronization of Area mutations
+- Per-user drawing action rate limiting (fixed-window, 50 mutations/minute/user)
 
 **Explicitly out of scope (not yet implemented):**
-- Authentication and authorization
 - Multi-instance scaling with Redis Pub/Sub
 - Presence and cursors
-- Satellite map layer
 
 ---
 
@@ -2436,6 +2435,180 @@ Unless stated otherwise:
 
 ---
 
+## 4e. Rate Limiting Tests
+
+These tests cover the per-user drawing action rate limiter. The limiter enforces a maximum number of mutation attempts per user within a rolling fixed window. Covered mutation endpoints: create area, update area, delete area, and restore version. Read endpoints (`GET`) are not subject to the rate limit. The production default is 50 mutations per minute.
+
+### Preconditions
+
+All tests share the following preconditions unless stated otherwise:
+
+- The backend is running with a rate limit of 3 mutations per minute (the integration test uses `max-actions=3`, `window=PT1M`).
+- The calling user is authenticated (valid JWT).
+- The rate-limit counter for the calling user starts at zero at the beginning of each test.
+
+---
+
+### TC-RATE-001 — First N mutations within the window are allowed
+
+**ID:** TC-RATE-001  
+**Category:** API Black-Box  
+**Priority:** P1
+
+**Preconditions:**
+- User has made 0 drawing actions in the current window.
+- Quota is set to 3 mutations per minute.
+
+**Steps:**
+1. Send 3 `POST /workspaces/{wid}/areas` requests (valid polygon, authenticated).
+
+**Expected Result:**
+- All 3 requests return `201 Created`.
+
+---
+
+### TC-RATE-002 — Request beyond quota returns 429 with RATE_LIMIT_EXCEEDED
+
+**ID:** TC-RATE-002  
+**Category:** API Black-Box  
+**Priority:** P1
+
+**Preconditions:**
+- User has exhausted the quota (3 mutations made in the current window).
+
+**Steps:**
+1. Exhaust quota with 3 `POST /workspaces/{wid}/areas` requests.
+2. Send a 4th `POST /workspaces/{wid}/areas` request.
+
+**Expected Result:**
+- The 4th response has status `429 Too Many Requests`.
+- Response body: `"code": "RATE_LIMIT_EXCEEDED"`, `"message"` contains "Try again".
+- Response header `Retry-After` is present and contains a positive integer (seconds until window expires).
+
+---
+
+### TC-RATE-003 — Users have independent quotas
+
+**ID:** TC-RATE-003  
+**Category:** API Black-Box  
+**Priority:** P1
+
+**Preconditions:**
+- User A has exhausted their quota.
+- User B has made 0 drawing actions in the current window.
+
+**Steps:**
+1. Exhaust User A's quota (3 mutations). Verify the 4th returns `429`.
+2. Send 1 `POST /workspaces/{wid}/areas` request authenticated as User B.
+
+**Expected Result:**
+- User A's 4th request returns `429`.
+- User B's request returns `201 Created` (User B's quota is independent).
+
+---
+
+### TC-RATE-004 — GET requests do not consume drawing quota
+
+**ID:** TC-RATE-004  
+**Category:** API Black-Box  
+**Priority:** P2
+
+**Preconditions:**
+- User has made 0 drawing actions in the current window.
+
+**Steps:**
+1. Send 5 `GET /workspaces/{wid}/areas?bbox=...` requests (authenticated).
+2. Send 3 `POST /workspaces/{wid}/areas` requests (authenticated).
+3. Attempt a 4th `POST`.
+
+**Expected Result:**
+- All 5 GET requests return `200 OK`.
+- All 3 POST requests return `201 Created` (GET requests did not consume quota).
+- The 4th POST returns `429 Too Many Requests`.
+
+---
+
+### TC-RATE-005 — Unauthenticated request returns 401 and does not consume quota
+
+**ID:** TC-RATE-005  
+**Category:** API Black-Box  
+**Priority:** P2
+
+**Preconditions:**
+- User has made 0 drawing actions in the current window.
+
+**Steps:**
+1. Send `POST /workspaces/{wid}/areas` with no Authorization header.
+2. Send 3 `POST /workspaces/{wid}/areas` requests authenticated as User A.
+
+**Expected Result:**
+- The unauthenticated request returns `401 Unauthorized`.
+- All 3 authenticated requests return `201 Created` (quota was not consumed by the unauthenticated request).
+
+---
+
+### TC-RATE-006 — Quota resets after the window expires
+
+**ID:** TC-RATE-006  
+**Category:** API Black-Box  
+**Priority:** P1
+
+**Preconditions:**
+- User has exhausted their quota.
+
+**Steps:**
+1. Exhaust quota (3 mutations). Verify the 4th returns `429`.
+2. Wait until the current rate-limit window expires (e.g., wait 1 minute plus buffer if `window=PT1M`).
+3. Send another `POST /workspaces/{wid}/areas` request.
+
+**Expected Result:**
+- After the window expires, the next mutation returns `201 Created` (fresh window).
+
+---
+
+### TC-RATE-007 — Rate-limited request produces no database write and no WebSocket event
+
+**ID:** TC-RATE-007  
+**Category:** API Black-Box  
+**Priority:** P1
+
+**Preconditions:**
+- User has exhausted their quota.
+- A WebSocket client is subscribed to `/topic/workspace/{wid}`.
+
+**Steps:**
+1. Exhaust quota with 3 allowed mutations. Drain and confirm the 3 corresponding WebSocket events.
+2. Record the current `area_version` count.
+3. Attempt a 4th mutation (quota exhausted → `429`).
+4. Wait 2 seconds for any delayed WebSocket events.
+
+**Expected Result:**
+- The 4th response returns `429 Too Many Requests`.
+- The `area_version` count is unchanged.
+- No WebSocket event is published.
+
+---
+
+### TC-RATE-008 — Failed authenticated mutations consume quota
+
+**ID:** TC-RATE-008  
+**Category:** API Black-Box  
+**Priority:** P2
+
+**Preconditions:**
+- User has made 0 drawing actions in the current window.
+- Quota is 3 mutations per minute.
+
+**Steps:**
+1. Send 3 `POST /workspaces/{wid}/areas` requests with an invalid (self-intersecting) polygon geometry.
+2. Send a 4th `POST` with a valid polygon geometry.
+
+**Expected Result:**
+- All 3 invalid requests return `400 Bad Request` (`INVALID_GEOMETRY`).
+- The 4th request (valid polygon) returns `429 Too Many Requests` (`RATE_LIMIT_EXCEEDED`), confirming that failed mutations consumed the quota.
+
+---
+
 ## 6. Discrepancies and Observations
 
 The following items describe gaps between the current prototype and the
@@ -2521,7 +2694,12 @@ an unclosed ring returns `400 INVALID_GEOMETRY`.
 
 | # | ID | Reason |
 |---|----|--------|
-| 1 | TC-AREA-005 | 404 for unknown workspace on create |
+| 1 | TC-RATE-001 | Rate limit golden path: first N mutations allowed |
+| 2 | TC-RATE-002 | 429 + RATE_LIMIT_EXCEEDED + Retry-After header contract |
+| 3 | TC-RATE-003 | Per-user quota independence |
+| 4 | TC-RATE-006 | Quota resets after window expiry |
+| 5 | TC-RATE-007 | Rate-limited request: no DB write, no WebSocket event |
+| 6 | TC-AREA-005 | 404 for unknown workspace on create |
 | 2 | TC-AREA-006 | Interior rings rejected — explicit design constraint |
 | 3 | TC-AREA-008 | Unclosed ring rejected — GeoJSON contract (resolved prototype gap) |
 | 4 | TC-AREA-010 | Self-intersecting polygon rejected — database integrity |
@@ -2553,7 +2731,10 @@ an unclosed ring returns `400 INVALID_GEOMETRY`.
 
 | # | ID | Reason |
 |---|----|--------|
-| 1 | TC-AREA-002 | areaKm2 accuracy — requires tolerance decision |
+| 1 | TC-RATE-004 | GET requests do not consume drawing quota |
+| 2 | TC-RATE-005 | Unauthenticated request returns 401 and does not consume quota |
+| 3 | TC-RATE-008 | Failed mutations count toward quota |
+| 4 | TC-AREA-002 | areaKm2 accuracy — requires tolerance decision |
 | 2 | TC-AREA-004 | Invalid name (blank / whitespace) |
 | 3 | TC-AREA-007 | Ring with fewer than 4 positions |
 | 4 | TC-AREA-009 | Coordinate out of WGS84 range |

@@ -22,6 +22,7 @@ This repository is a take-home assignment implementing a simplified, prototype-g
 | Viewport bounding-box spatial querying (PostGIS / GiST) | Implemented |
 | Map / satellite layer switching (OSM ↔ satellite) | Implemented |
 | Satellite tile layer | Implemented — Esri World Imagery (temporary; see [Map Providers](#map-providers)) |
+| Per-user drawing action rate limiting | Implemented — 50 mutations/minute/user; fixed-window in-process limiter |
 | Workspace membership authorization | Not implemented — known limitation |
 | Password-based authentication | Not implemented — prototype only |
 | GovMap integration | Not implemented — see [Map Providers](#map-providers) |
@@ -300,6 +301,8 @@ All values are preset; no `.env` file is needed.
 | `app.auth.jwt-issuer` | `snapland` |
 | `app.dev.user-id` | `00000000-0000-0000-0000-000000000001` |
 | `app.prototype.workspace-id` | `00000000-0000-0000-0000-000000000002` |
+| `app.rate-limit.drawing-actions.max-actions` | `50` |
+| `app.rate-limit.drawing-actions.window` | `PT1M` |
 
 ### Production — required environment variables
 
@@ -307,6 +310,8 @@ All values are preset; no `.env` file is needed.
 |----------|-------------|
 | `JWT_SECRET` | HMAC-SHA256 signing key (minimum 32 characters) |
 | `PROTOTYPE_WORKSPACE_ID` | UUID of the shared prototype workspace |
+
+The rate limit defaults (`50` mutations per minute) are defined in `application.yml` and can be overridden with standard Spring property mechanisms.
 
 Standard Spring Boot datasource properties (`spring.datasource.*`) override the default connection settings.
 
@@ -330,10 +335,11 @@ cd backend
 | `AreaWebSocketIntegrationTest` | Event publishing for all mutation types; workspace isolation |
 | `AreaWebSocketAuthIntegrationTest` | WebSocket JWT acceptance and rejection (expired, wrong key, missing) |
 | `AuthIntegrationTest` | Registration, login, duplicate detection, JWT claims, workspace membership |
+| `DrawingRateLimitIntegrationTest` | Per-user quota enforcement, 429 response contract, independent quotas, window reset, no DB write on reject, failed mutations count |
 | `SchemaIntegrationTest` | Database schema constraints and PostGIS spatial queries |
 | `SnaplandGisApplicationTests` | Spring context loads |
 
-**95 integration tests, 0 failures** (verified by `./mvnw test`). Frontend tests: not implemented.
+**103 integration tests, 0 failures** (verified by `./mvnw test`). Frontend tests: not implemented.
 
 ---
 
@@ -371,6 +377,7 @@ A partial GiST spatial index covers `area.geometry WHERE status = 'ACTIVE'`. Thi
 | REST authentication | Spring Security OAuth2 Resource Server validates all requests except `/auth/**` and `/dev/token` |
 | WebSocket authentication | `JwtChannelInterceptor` validates the JWT in the STOMP `CONNECT` frame |
 | Input validation | Bean Validation on all request DTOs; polygon validity enforced via JTS before persistence |
+| Drawing action rate limiting | Fixed-window per-user limiter (50/min default); enforced as a Spring MVC interceptor; returns `429` with `Retry-After` header |
 | 401 handling | Angular interceptor clears the stored token and redirects to `/auth` on any 401 response |
 
 **Known gap**: Workspace membership is not enforced in `AreaService`. Any authenticated user can read or mutate areas in any workspace. This is documented in `docs/DESIGN.md` as a known limitation of the prototype.
@@ -391,7 +398,7 @@ These are deliberate prototype constraints, not defects.
 | No OpenAPI documentation | No Swagger UI or OpenAPI spec |
 | No frontend tests | Angular components have no unit or e2e tests |
 | GovMap not integrated | Esri World Imagery used as a temporary tile source |
-| No rate limiting | No throttling on auth or mutation endpoints |
+| In-process rate limiter only | Drawing action rate limit is single-JVM and resets on restart; not effective across multiple instances |
 
 ---
 
@@ -402,7 +409,7 @@ The design document (`docs/DESIGN.md`) describes the intended production path. W
 1. **Strong authentication** — replace email-only login with a credential-backed identity provider or add a password field with bcrypt.
 2. **Workspace authorization** — enforce workspace membership checks in `AreaService`.
 3. **Redis Pub/Sub** — wire `AreaEventRelay` to Redis for multi-instance WebSocket fan-out.
-4. **Rate limiting** — throttle authentication and area mutation endpoints.
+4. **Production rate limiting** — move the in-process drawing action rate limiter to the API Gateway with a shared backing store (e.g., Redis sliding window) to enforce limits across all instances and survive restarts.
 5. **Secret management** — rotate the JWT secret; manage `JWT_SECRET` through a secrets manager (Vault, AWS KMS, etc.).
 6. **TLS** — terminate HTTPS / WSS at a load balancer or reverse proxy.
 
@@ -417,7 +424,8 @@ snapland-gis/
 │   │   ├── area/          # Area entity, repository, service, controller, DTOs
 │   │   ├── auth/          # AuthService, AuthController, JwtIssuer, DTOs
 │   │   ├── common/        # Exception hierarchy, GlobalExceptionHandler, ApiError
-│   │   ├── config/        # SecurityConfig, JwtProperties, PrototypeProperties
+│   │   ├── config/        # SecurityConfig, ClockConfig, JwtProperties, PrototypeProperties
+│   │   ├── ratelimit/     # DrawingRateLimiter, DrawingRateLimitInterceptor, DrawingRateLimitProperties
 │   │   ├── dev/           # DevProperties, DevDataInitializer, DevTokenController
 │   │   ├── realtime/      # WebSocketConfig, JwtChannelInterceptor, AreaEventRelay
 │   │   ├── user/          # User entity, UserRepository

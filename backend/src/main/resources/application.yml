@@ -27,6 +27,10 @@ app:
     jwt-issuer: snapland
   prototype:
     workspace-id: ${PROTOTYPE_WORKSPACE_ID}
+  rate-limit:
+    drawing-actions:
+      max-actions: 50
+      window: PT1M
 
 management:
   endpoints:

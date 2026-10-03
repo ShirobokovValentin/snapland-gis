@@ -1,4 +1,4 @@
-import { Component } from '@angular/core';
+import { ChangeDetectorRef, Component } from '@angular/core';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
 import { AuthService } from './auth.service';
@@ -20,6 +20,7 @@ export class AuthComponent {
   constructor(
     private authService: AuthService,
     private router: Router,
+    private cdr: ChangeDetectorRef,
   ) {}
 
   submit(): void {
@@ -47,6 +48,7 @@ export class AuthComponent {
         } else {
           this.error = 'Something went wrong. Please try again.';
         }
+        this.cdr.detectChanges();
       },
     });
   }

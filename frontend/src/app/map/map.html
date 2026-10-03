@@ -16,6 +16,15 @@
 
   <button class="logout-btn" (click)="logout()">Sign out</button>
 
+  @if (activeUsers.size > 0) {
+    <div class="presence-panel">
+      <div class="presence-title">Active users ({{ activeUsers.size }})</div>
+      @for (user of activeUserList; track user.id) {
+        <div class="presence-item">{{ user.name }}</div>
+      }
+    </div>
+  }
+
   @if (wsStatus === 'reconnecting') {
     <div class="reconnecting-indicator">Reconnecting realtime updates…</div>
   }

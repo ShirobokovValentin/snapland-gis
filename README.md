@@ -26,6 +26,7 @@ This repository is a take-home assignment implementing a simplified, prototype-g
 | Area mutation audit trail | Implemented — AreaVersion records actor, action, timestamp, and resulting state for every committed mutation |
 | Custom Micrometer metrics + Prometheus endpoint | Implemented — committed mutation counters (by change type), version conflict counter, rate limit rejection counter, active WebSocket session gauge; exposed at `/actuator/prometheus` |
 | WebSocket graceful degradation and reconnect | Implemented — auto-reconnect with JWT refresh on every attempt; viewport reconciliation via REST after reconnect; "Reconnecting" status banner |
+| Active users / presence | Implemented — REST snapshot + WebSocket incremental events; race-safe snapshot with event buffering; multi-tab collapses to single presence entry |
 | Workspace membership authorization | Not implemented — known limitation |
 | Password-based authentication | Not implemented — prototype only |
 | GovMap integration | Not implemented — see [Map Providers](#map-providers) |
@@ -162,6 +163,14 @@ Events are broadcast only after the database transaction commits. If the transac
 
 **Current limitation**: The in-process Spring `SimpleBroker` broadcasts only to subscribers connected to the same JVM instance. Multi-instance scaling requires Redis Pub/Sub fan-out, which is modelled in the design but not yet implemented.
 
+### Active Users / Presence
+
+When a user establishes a STOMP connection, `PresenceService` broadcasts a `PRESENCE_JOINED` event to `/topic/workspace/{workspaceId}/presence`. When the last session for a user disconnects, `PRESENCE_LEFT` is broadcast. Multiple browser tabs for the same user collapse to a single presence entry.
+
+On (re)connect, the frontend calls `GET /workspaces/{workspaceId}/presence` to retrieve the current snapshot. Events received while the snapshot request is in flight are buffered and replayed after the snapshot is applied, preventing race-condition gaps.
+
+The presence panel in the lower-left corner of the map shows all currently active users. Presence state is ephemeral (cleared on server restart) and intentionally not persisted to the database.
+
 ---
 
 ## Version History
@@ -209,6 +218,12 @@ All area and version endpoints require a valid JWT in the `Authorization: Bearer
 |--------|------|-------------|
 | `GET` | `/workspaces/{wid}/areas/{aid}/versions` | Full version log |
 | `POST` | `/workspaces/{wid}/areas/{aid}/versions/{v}/restore` | Restore to version `v` |
+
+### Authentication
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/workspaces/{wid}/presence` | Active users in workspace — returns `[{id, name}]` |
 
 ### Authentication
 
@@ -344,10 +359,11 @@ cd backend
 | `DrawingRateLimitIntegrationTest` | Per-user quota enforcement, 429 response contract, independent quotas, window reset, no DB write on reject, failed mutations count |
 | `AreaAuditIntegrationTest` | AreaVersion audit trail: exact actor per mutation type, changeType, version, timestamp; failed mutation creates no committed version |
 | `MetricsIntegrationTest` | Custom Micrometer metrics: committed mutation counters (all 4 change types), version conflict counter, rate limit rejection counter, Prometheus scrape endpoint, WebSocket session gauge (connect / disconnect / rejected connect / duplicate disconnect) |
+| `PresenceIntegrationTest` | Presence REST snapshot (auth, unknown workspace, empty list, user included after connect); PRESENCE_JOINED and PRESENCE_LEFT events; multi-tab session collapsing; two-user snapshot |
 | `SchemaIntegrationTest` | Database schema constraints and PostGIS spatial queries |
 | `SnaplandGisApplicationTests` | Spring context loads |
 
-**120 integration tests, 0 failures** (verified by `./mvnw test`). Frontend tests: not implemented.
+**131 integration tests, 0 failures** (verified by `./mvnw test`). Frontend tests: not implemented.
 
 ---
 
@@ -402,7 +418,7 @@ These are deliberate prototype constraints, not defects.
 |------------|--------|
 | No password authentication | Any email registers or logs in; suitable only for a closed demo |
 | No workspace authorization | All authenticated users can access all workspaces |
-| Single-instance WebSocket broker | Spring `SimpleBroker` does not fan out across multiple backend instances |
+| Single-instance WebSocket broker | Spring `SimpleBroker` does not fan out across multiple backend instances; this also means presence is per-instance — users connected to different instances will not see each other |
 | Redis not integrated | Redis runs in `docker-compose` but has no application code |
 | Static workspace ID in frontend | `environment.ts` hardcodes `workspaceId` |
 | No OpenAPI documentation | No Swagger UI or OpenAPI spec |
@@ -420,7 +436,7 @@ The design document (`docs/DESIGN.md`) describes the intended production path. W
 
 1. **Strong authentication** — replace email-only login with a credential-backed identity provider or add a password field with bcrypt.
 2. **Workspace authorization** — enforce workspace membership checks in `AreaService`.
-3. **Redis Pub/Sub** — wire `AreaEventRelay` to Redis for multi-instance WebSocket fan-out.
+3. **Redis Pub/Sub** — wire `AreaEventRelay` and `PresenceService` to Redis for multi-instance WebSocket fan-out and cross-instance presence.
 4. **Production rate limiting** — move the in-process drawing action rate limiter to the API Gateway with a shared backing store (e.g., Redis sliding window) to enforce limits across all instances and survive restarts.
 5. **Secret management** — rotate the JWT secret; manage `JWT_SECRET` through a secrets manager (Vault, AWS KMS, etc.).
 6. **TLS** — terminate HTTPS / WSS at a load balancer or reverse proxy.
@@ -441,7 +457,7 @@ snapland-gis/
 │   │   ├── ratelimit/     # DrawingRateLimiter, DrawingRateLimitInterceptor, DrawingRateLimitProperties
 │   │   ├── metrics/       # AreaMetricsListener, WebSocketSessionMetrics
 │   │   ├── dev/           # DevProperties, DevDataInitializer, DevTokenController
-│   │   ├── realtime/      # WebSocketConfig, JwtChannelInterceptor, AreaEventRelay
+│   │   ├── realtime/      # WebSocketConfig, JwtChannelInterceptor, AreaEventRelay, PresenceService, PresenceController
 │   │   ├── user/          # User entity, UserRepository
 │   │   └── workspace/     # Workspace, WorkspaceMember entities and repositories
 │   └── src/main/resources/

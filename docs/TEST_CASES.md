@@ -29,10 +29,11 @@ observed through its HTTP API and browser UI.
 - Area mutation audit trail via AreaVersion (actor, action, timestamp, resulting state)
 - Custom Micrometer metrics (committed mutation counters, version conflict counter, rate limit rejection counter, active WebSocket session gauge) and Prometheus scrape endpoint
 - WebSocket graceful degradation and reconnect (status indicator, token refresh on reconnect, viewport reconciliation after reconnect)
+- Active users / presence (REST snapshot, PRESENCE_JOINED / PRESENCE_LEFT events, multi-tab session collapsing, race-safe buffered snapshot)
 
 **Explicitly out of scope (not yet implemented):**
 - Multi-instance scaling with Redis Pub/Sub
-- Presence and cursors
+- Cursor / drawing presence
 
 ---
 
@@ -3196,6 +3197,238 @@ the backend process. All tests are manual UI tests.
 - After the fourth reconnect: the application is fully functional.
 - Creating a new Area in step 4 succeeds and the Area appears on the map.
 - No errors appear in the browser console across all cycles.
+
+---
+
+## 5b. Active Users / Presence API Tests
+
+These are automated integration tests covering `PresenceService`, `PresenceController`, and presence WebSocket events. Implemented in `PresenceIntegrationTest`.
+
+### Shared Preconditions
+
+- Backend is running with the `test` profile.
+- A Testcontainers PostGIS database is seeded with the dev user (`Test User`) and the prototype workspace.
+- All STOMP connections use a valid JWT. Sessions are disconnected in `@AfterEach`. Before each test, `PresenceService.getActiveUsers()` is polled until it returns an empty list.
+
+---
+
+### TC-PRESENCE-001 — Unauthenticated GET /presence returns 401
+
+**Purpose:** Verify that the presence endpoint requires authentication.
+
+**Action:** `GET /workspaces/{workspaceId}/presence` — no `Authorization` header.
+
+**Expected:**
+- HTTP 401
+
+---
+
+### TC-PRESENCE-002 — Unknown workspaceId returns 404 WORKSPACE_NOT_FOUND
+
+**Purpose:** Verify that requesting presence for an unknown workspace returns the standard 404 error response.
+
+**Action:** `GET /workspaces/{randomUUID}/presence` with valid JWT.
+
+**Expected:**
+- HTTP 404
+- `body.code == "WORKSPACE_NOT_FOUND"`
+
+---
+
+### TC-PRESENCE-003 — No active sessions returns 200 with empty list
+
+**Purpose:** Verify that when no users are connected, the snapshot is empty.
+
+**Action:** `GET /workspaces/{workspaceId}/presence` with valid JWT — no active STOMP sessions.
+
+**Expected:**
+- HTTP 200
+- `body == []`
+
+---
+
+### TC-PRESENCE-004 — After STOMP connect, GET returns user with correct name
+
+**Purpose:** Verify that a connected user appears in the presence snapshot with their display name.
+
+**Setup:** Dev user establishes a STOMP session. Wait until `getActiveUsers()` returns 1 entry.
+
+**Action:** `GET /workspaces/{workspaceId}/presence` with valid JWT.
+
+**Expected:**
+- HTTP 200
+- `body` contains one entry: `{id: devUserId, name: "Test User"}`
+
+---
+
+### TC-PRESENCE-005 — STOMP connect broadcasts PRESENCE_JOINED
+
+**Purpose:** Verify that the first STOMP session for a user triggers a `PRESENCE_JOINED` event on the presence topic.
+
+**Setup:** Dev user (watcher) connects and subscribes to `/topic/workspace/{workspaceId}/presence`. A second user (second user) then connects.
+
+**Expected:**
+- Watcher receives `PRESENCE_JOINED` event within 5 s.
+- `event.user.id == secondUserId`
+- `event.user.name == "Second User"`
+
+---
+
+### TC-PRESENCE-006 — STOMP disconnect broadcasts PRESENCE_LEFT
+
+**Purpose:** Verify that disconnecting the last session for a user triggers a `PRESENCE_LEFT` event.
+
+**Setup:** Second user connects. Watcher (dev user) connects and subscribes to presence topic. Second user disconnects.
+
+**Expected:**
+- Watcher receives `PRESENCE_LEFT` event within 5 s.
+- `event.user.id == secondUserId`
+- `event.user.name == "Second User"`
+
+---
+
+### TC-PRESENCE-007 — After STOMP disconnect, GET returns empty list
+
+**Purpose:** Verify that the REST snapshot no longer includes a user after all their sessions disconnect.
+
+**Setup:** Dev user connects. Wait until `getActiveUsers()` returns 1. Dev user disconnects. Wait until `getActiveUsers()` returns 0.
+
+**Action:** `GET /workspaces/{workspaceId}/presence` with valid JWT.
+
+**Expected:**
+- HTTP 200
+- `body == []`
+
+---
+
+### TC-PRESENCE-008 — Multi-tab: first session disconnect does not broadcast PRESENCE_LEFT
+
+**Purpose:** Verify that PRESENCE_LEFT is not emitted while a second session for the same user is still connected.
+
+**Setup:** Watcher (dev user) connects and subscribes to presence topic. Second user opens two STOMP sessions (tab 1 via stompClient2, tab 2 via stompClient3). Watcher receives and consumes the PRESENCE_JOINED event for second user. Wait until `getActiveUsers()` returns 2.
+
+**Action:** Disconnect second user's tab 1 only. Poll the watcher's event queue for 600 ms.
+
+**Expected:**
+- No event is received within 600 ms (no PRESENCE_LEFT).
+
+---
+
+### TC-PRESENCE-009 — Multi-tab: last session disconnect broadcasts PRESENCE_LEFT
+
+**Purpose:** Verify that PRESENCE_LEFT is emitted when the final session for a multi-tab user disconnects.
+
+**Setup:** Second user opens two STOMP sessions. Watcher connects and subscribes to presence topic. Disconnect second user's first session; confirm no event. Then disconnect second user's last session.
+
+**Expected:**
+- No event after first disconnect (confirmed by polling 400 ms).
+- Watcher receives `PRESENCE_LEFT` for second user after last disconnect.
+
+---
+
+### TC-PRESENCE-010 — Two distinct users produce correct snapshot count
+
+**Purpose:** Verify that two connected users each appear in the REST snapshot.
+
+**Setup:** Dev user connects. Second user connects. Wait until `getActiveUsers()` returns 2.
+
+**Action:** `GET /workspaces/{workspaceId}/presence` with valid JWT.
+
+**Expected:**
+- HTTP 200
+- `body` has 2 entries.
+- `body[*].id` contains both `devUserId` and `secondUserId` (any order).
+
+---
+
+### TC-PRESENCE-011 — PRESENCE_JOINED payload contains correct userId and display name
+
+**Purpose:** Verify the payload contract of a PRESENCE_JOINED event.
+
+**Setup:** Dev user (watcher) connects and subscribes. Second user connects.
+
+**Expected:**
+- Watcher receives event with `type == "PRESENCE_JOINED"`, `user.id == secondUserId`, `user.name == "Second User"`.
+
+---
+
+## 5c. Active Users / Presence UI Manual Tests
+
+These tests require two browser windows with different authenticated users.
+
+### Shared Preconditions
+
+- Application running at `http://localhost:4201`.
+- Two browser windows (or tabs in different sessions) with different user accounts logged in and the map page open.
+
+---
+
+### TC-PRESENCE-UI-001 — Active users panel appears when a second user connects
+
+**Steps:**
+1. Open the map in Browser A (User A logged in).
+2. Open the map in Browser B (User B logged in).
+
+**Expected:**
+- A presence panel appears in the lower-left corner of both browser windows.
+- The panel shows "Active users (2)" and lists both users' display names.
+
+---
+
+### TC-PRESENCE-UI-002 — Panel disappears when no other users are active
+
+**Steps:**
+1. Close Browser B (or log out User B).
+
+**Expected:**
+- The presence panel in Browser A either shows only User A, or disappears (depending on whether User A includes themselves — current implementation does include self).
+
+---
+
+### TC-PRESENCE-UI-003 — Panel updates when a new user connects
+
+**Steps:**
+1. Start with both browsers open (presence panel visible).
+2. Open a third browser window with a third user account and navigate to the map.
+
+**Expected:**
+- Presence panel in existing browsers updates to show 3 active users without a page reload.
+
+---
+
+### TC-PRESENCE-UI-004 — Multi-tab: opening a second tab does not add duplicate
+
+**Steps:**
+1. Open a second browser tab for User A (same user account, same browser).
+2. Navigate to the map in the second tab.
+
+**Expected:**
+- The presence panel does not show User A twice.
+- Count does not increase for User A's second tab.
+
+---
+
+### TC-PRESENCE-UI-005 — Presence panel persists after WebSocket reconnect
+
+**Steps:**
+1. Two users are connected. Presence panel shows 2 active users.
+2. Disable and re-enable the network (or restart the backend).
+
+**Expected:**
+- After reconnect, the presence panel re-populates from the REST snapshot.
+- Both users appear in the panel again.
+
+---
+
+### TC-PRESENCE-UI-006 — Presence panel is not interactive (pointer-events: none)
+
+**Steps:**
+1. Open the map with at least one other user present.
+2. Try to click on the presence panel or its items.
+
+**Expected:**
+- The presence panel does not capture clicks or block interaction with the map behind it.
+- Map interactions (zoom, pan) work normally when the cursor is over the presence panel.
 
 ---
 

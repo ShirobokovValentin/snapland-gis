@@ -13,6 +13,8 @@ import 'leaflet-draw';
 import { AreaService } from '../area/area.service';
 import { Area, AreaEventMessage, AreaVersionResponse } from '../area/area.model';
 import { RealtimeService } from '../realtime/realtime.service';
+import { PresenceService } from '../realtime/presence.service';
+import { PresenceEventMessage, UserPresence } from '../realtime/presence.model';
 import { AuthService } from '../auth/auth.service';
 import { Router } from '@angular/router';
 import { environment } from '../../environments/environment';
@@ -66,6 +68,14 @@ export class MapComponent implements AfterViewInit, OnDestroy {
 
   activeBaseMap: 'map' | 'satellite' = 'map';
   wsStatus: 'connected' | 'reconnecting' = 'connected';
+  activeUsers = new Map<string, UserPresence>();
+
+  private presenceLoading = false;
+  private presenceBuffer: PresenceEventMessage[] = [];
+
+  get activeUserList(): UserPresence[] {
+    return Array.from(this.activeUsers.values());
+  }
 
   isDrawing = false;
   liveDrawArea: number | null = null;
@@ -83,6 +93,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
   constructor(
     private areaService: AreaService,
     private realtimeService: RealtimeService,
+    private presenceService: PresenceService,
     private authService: AuthService,
     private router: Router,
     private cdr: ChangeDetectorRef,
@@ -430,9 +441,50 @@ export class MapComponent implements AfterViewInit, OnDestroy {
       () => this.loadViewport(),
       (status) => {
         this.wsStatus = status;
+        if (status === 'connected') {
+          this.loadPresence();
+        }
         this.cdr.detectChanges();
       },
+      (event) => this.handlePresenceEvent(event),
     );
+  }
+
+  private loadPresence(): void {
+    this.presenceLoading = true;
+    this.presenceBuffer = [];
+    this.presenceService.getPresence(environment.workspaceId).subscribe({
+      next: (users) => {
+        this.activeUsers = new Map(users.map(u => [u.id, u]));
+        const buffer = this.presenceBuffer;
+        this.presenceLoading = false;
+        this.presenceBuffer = [];
+        buffer.forEach(e => this.applyPresenceEvent(e));
+        this.cdr.detectChanges();
+      },
+      error: (err) => {
+        this.presenceLoading = false;
+        this.presenceBuffer = [];
+        console.error('Failed to load presence snapshot', err);
+      },
+    });
+  }
+
+  private handlePresenceEvent(event: PresenceEventMessage): void {
+    if (this.presenceLoading) {
+      this.presenceBuffer.push(event);
+      return;
+    }
+    this.applyPresenceEvent(event);
+    this.cdr.detectChanges();
+  }
+
+  private applyPresenceEvent(event: PresenceEventMessage): void {
+    if (event.type === 'PRESENCE_JOINED') {
+      this.activeUsers.set(event.user.id, event.user);
+    } else if (event.type === 'PRESENCE_LEFT') {
+      this.activeUsers.delete(event.user.id);
+    }
   }
 
   private handleRealtimeEvent(event: AreaEventMessage): void {

@@ -1,0 +1,1161 @@
+We are ready to plan the next task:
+
+Task 17 — Active Users / Presence
+
+Do NOT implement anything yet.
+
+First inspect the actual repository and produce a pre-implementation report.
+
+Read:
+
+- CLAUDE.md
+- README.md
+- docs/REQUIREMENTS.md
+- docs/DESIGN.md
+- docs/TEST_CASES.md
+- current authentication implementation
+- User / WorkspaceMember entities and repositories
+- current STOMP/WebSocket configuration
+- JwtChannelInterceptor
+- WebSocketSessionMetrics
+- current realtime event publishing
+- frontend RealtimeService
+- frontend AuthService
+- frontend MapComponent
+- Task 16 reconnect implementation
+
+Use the actual code as the source of truth.
+
+# Requirement
+
+The original assignment requires:
+
+    Show active users currently viewing/drawing on the map.
+
+For this prototype, interpret "active user" as:
+
+    an authenticated user with at least one currently established
+    STOMP/WebSocket session subscribed/connected to the prototype workspace.
+
+Do NOT implement live cursor positions, mouse movements, or collaborative
+vertex drawing.
+
+The initial MVP goal is simply to show which authenticated users are
+currently connected to the workspace.
+
+# Architectural constraint
+
+The current application is intentionally a single-instance prototype.
+
+Prefer:
+
+    in-memory presence state
+
+Do NOT introduce Redis solely for Task 17.
+
+Production multi-instance presence should be documented as future evolution:
+
+    Backend instances
+        ↓
+    shared Redis presence / distributed registry
+        ↓
+    cross-instance presence events
+
+Do not implement this now.
+
+# Important semantic questions
+
+Investigate and explicitly answer:
+
+1. What exactly should count as "active"?
+
+Recommended baseline:
+
+    successful authenticated STOMP connection
+
+not:
+
+    logged-in user with a JWT in localStorage
+
+and not:
+
+    recent REST request
+
+2. How should multiple browser tabs/devices for the same user behave?
+
+Example:
+
+    Alice tab 1 CONNECT
+    Alice tab 2 CONNECT
+
+UI should normally show:
+
+    Alice
+
+once, not twice.
+
+Then:
+
+    Alice tab 1 DISCONNECT
+
+Alice must remain active because tab 2 is still connected.
+
+Only after the last Alice session disconnects should Alice disappear.
+
+Determine the cleanest data structure.
+
+Likely conceptually:
+
+    workspaceId
+        ↓
+    userId
+        ↓
+    Set<sessionId>
+
+Do not commit to this structure until you inspect the current code.
+
+3. How is workspace identity available to the WebSocket session?
+
+Inspect the current topic/subscription model:
+
+    /topic/workspace/{workspaceId}
+
+Determine whether workspaceId is known at CONNECT time or only at SUBSCRIBE.
+
+This matters.
+
+Do NOT assume every connected WebSocket session belongs to the prototype
+workspace unless the current architecture guarantees that.
+
+If presence should technically be based on SUBSCRIBE rather than CONNECT,
+explain why.
+
+# User identity
+
+JWT sub currently contains the authenticated user UUID.
+
+Presence UI needs at least:
+
+    userId
+    name
+
+Potentially email is available, but do not expose it unless useful.
+
+Inspect how User data can be resolved from the authenticated Principal.
+
+Prefer sending:
+
+    {
+        "id": "...",
+        "name": "Alice"
+    }
+
+Do not expose:
+
+    JWT
+    internal session IDs
+    unnecessary authentication information
+
+Email is probably unnecessary for the map presence UI.
+
+# Presence state
+
+Investigate a minimal server-side PresenceService.
+
+Required behavior:
+
+    first session for Alice appears
+        -> Alice becomes active
+
+    additional session for Alice
+        -> no duplicate Alice
+
+    one of several Alice sessions disconnects
+        -> Alice remains active
+
+    last Alice session disconnects
+        -> Alice becomes inactive
+
+State must be safe for concurrent WebSocket connect/disconnect activity.
+
+Use standard Java concurrent collections or synchronization as appropriate.
+
+Do not persist presence in PostgreSQL.
+
+Presence is ephemeral runtime state.
+
+Backend restart naturally clears presence.
+
+# Initial presence snapshot
+
+A newly connected client must learn who is already active.
+
+Analyze the simplest protocol.
+
+Possible approaches:
+
+A. REST endpoint:
+
+    GET /workspaces/{workspaceId}/presence
+
+B. STOMP request/reply
+
+C. Send a presence snapshot automatically after subscribe/connect
+
+Compare them.
+
+Prefer the simplest approach that fits the current architecture.
+
+A REST snapshot plus WebSocket incremental events may fit the existing
+REST-authoritative/realtime-notification pattern well:
+
+    initial/reconnect
+        ↓
+    GET presence snapshot
+        ↓
+    receive PRESENCE_JOINED / PRESENCE_LEFT events
+
+But investigate before deciding.
+
+# Presence realtime events
+
+If incremental events are used, define a minimal contract.
+
+For example:
+
+    PRESENCE_JOINED
+    PRESENCE_LEFT
+
+Payload should contain only what clients need.
+
+Example conceptually:
+
+    {
+        "type": "PRESENCE_JOINED",
+        "user": {
+            "id": "...",
+            "name": "Alice"
+        }
+    }
+
+Do not reuse Area change_type for presence.
+
+Do not persist these events.
+
+# Event correctness
+
+Presence is best-effort ephemeral state.
+
+Analyze races around:
+
+    snapshot + JOIN event
+    snapshot + LEFT event
+    reconnect
+    abnormal WebSocket close
+
+The frontend should tolerate duplicate JOIN/LEFT events idempotently.
+
+Prefer storing active users by user ID on the frontend rather than blindly
+appending/removing list entries.
+
+Do not introduce event sequence infrastructure.
+
+# Disconnect behavior
+
+Inspect Spring STOMP lifecycle events already used by:
+
+    WebSocketSessionMetrics
+
+Determine whether the same:
+
+    SessionConnectedEvent
+    SessionDisconnectEvent
+
+can safely support presence.
+
+Important:
+
+SessionDisconnectEvent may occur more than once.
+
+Presence removal must therefore be idempotent.
+
+Also analyze abnormal connection loss.
+
+# Authentication failure
+
+Rejected STOMP CONNECT attempts must NOT create presence.
+
+Example:
+
+    CONNECT invalid JWT
+        -> rejected
+        -> Alice must not appear active
+
+Presence must only be registered after successful authenticated STOMP
+connection/subscription according to the chosen semantics.
+
+# Task 16 interaction
+
+Task 16 automatically reconnects.
+
+Expected behavior:
+
+    Alice connection lost
+        -> Alice eventually leaves presence
+
+    reconnect succeeds
+        -> Alice becomes active again
+
+A brief leave/join transition is acceptable for this prototype unless there
+is a simple existing mechanism to avoid it.
+
+Do not add presence grace periods, heartbeat leases, or distributed TTL
+infrastructure unless clearly necessary.
+
+After reconnect, the frontend must converge to the correct active-user
+snapshot/state.
+
+# Drawing semantics
+
+The assignment wording says:
+
+    "active users currently viewing/drawing on the map"
+
+For this task, DO NOT attempt to distinguish:
+
+    viewing
+    drawing
+    editing
+
+unless the current application already exposes that information cheaply.
+
+Baseline MVP:
+
+    active = connected to workspace realtime session
+
+Document this interpretation explicitly.
+
+Do not add:
+
+    DRAWING
+    EDITING
+    VIEWING
+
+presence statuses unless there is a strong requirement in the existing
+documentation.
+
+# Frontend UI
+
+Inspect the current map layout.
+
+Recommend the smallest useful UI.
+
+Potential example:
+
+    Active users (2)
+    Alice
+    Bob
+
+or a compact control:
+
+    Active: Alice, Bob
+
+Do not build:
+
+- avatars;
+- profile pages;
+- chat;
+- cursor tracking;
+- user colors;
+- user locations;
+- large sidebar solely for presence.
+
+The UI should not obscure map controls.
+
+Determine where it fits best in the current layout.
+
+# Current user
+
+Determine whether the authenticated user should appear in the active list.
+
+Recommended:
+
+    yes
+
+because the list represents all active workspace users.
+
+Optionally display:
+
+    Alice (you)
+
+if current user information is already easily available.
+
+Do not add extra backend complexity just to render "(you)".
+
+# REST fallback
+
+Presence is inherently tied to realtime connectivity.
+
+If WebSocket is unavailable:
+
+    Area CRUD via REST continues to work
+
+but presence may be temporarily unavailable/stale.
+
+This is acceptable.
+
+Do NOT make Area functionality depend on presence.
+
+Task 16 graceful degradation must remain intact.
+
+# Metrics
+
+Do not add user IDs/names as metric tags.
+
+Task 15:
+
+    websocket.connections.active
+
+counts sessions.
+
+Presence:
+
+    active users
+
+counts unique authenticated users.
+
+These are intentionally different.
+
+Example:
+
+    Alice has 2 tabs
+    Bob has 1 tab
+
+Then:
+
+    websocket.connections.active = 3
+    active users = 2
+
+Analyze whether an additional:
+
+    websocket.users.active
+
+gauge is useful.
+
+Do NOT add it automatically.
+
+Recommend it only if it materially improves observability without adding
+complexity.
+
+# Security
+
+Presence endpoint/events must respect authentication.
+
+An unauthenticated user must not retrieve the active-user list.
+
+Analyze whether workspace membership must also be checked with the current
+prototype workspace model.
+
+Do not weaken existing REST/STOMP security.
+
+# Testing
+
+Propose focused backend integration tests.
+
+At minimum cover:
+
+TC-PRESENCE-001
+Authenticated user appears after establishing presence.
+
+TC-PRESENCE-002
+Second user appears and both users are returned.
+
+TC-PRESENCE-003
+Disconnect removes user.
+
+TC-PRESENCE-004
+Two sessions for the same user produce one active user.
+
+TC-PRESENCE-005
+Closing one of two sessions keeps the user active.
+
+TC-PRESENCE-006
+Closing the last session removes the user.
+
+TC-PRESENCE-007
+Rejected invalid/unauthenticated CONNECT does not create presence.
+
+TC-PRESENCE-008
+Presence snapshot requires authentication.
+
+TC-PRESENCE-009
+Reconnect restores presence.
+
+TC-PRESENCE-010
+Duplicate disconnect handling does not corrupt presence state.
+
+If workspace-scoped presence is implemented, also test isolation:
+
+TC-PRESENCE-011
+Users connected to different workspaces do not appear in each other's
+presence lists.
+
+Only include this test if multiple workspace semantics are actually supported
+by the current implementation.
+
+Frontend automated tests:
+
+First inspect whether frontend test infrastructure exists.
+
+Do not introduce a new frontend testing framework solely for this task.
+
+Manual tests should include two browsers/incognito sessions:
+
+    Alice
+    Bob
+
+and multi-tab Alice behavior.
+
+# Documentation
+
+After implementation, expected documentation updates:
+
+README.md
+- Features
+- Real-Time Collaboration
+- Known Limitations
+- Production / Scaling Evolution
+- Testing
+
+DESIGN.md
+- Presence semantics
+- lifecycle
+- session/user relationship
+- single-instance limitation
+- multi-instance production evolution
+
+TEST_CASES.md
+- presence cases
+
+Do not mark Task 17 implemented before implementation is complete.
+
+# Scope exclusions
+
+Do NOT implement:
+
+- Redis;
+- distributed presence;
+- Kafka/RabbitMQ;
+- database persistence of presence;
+- cursor sharing;
+- mouse movement broadcasting;
+- live polygon drawing broadcast;
+- collaborative vertex drawing;
+- chat;
+- avatars;
+- typing indicators;
+- user geolocation;
+- presence history;
+- last-seen tracking;
+- presence analytics;
+- heartbeat/lease infrastructure unless absolutely required by current
+  WebSocket lifecycle;
+- frontend testing framework solely for this task.
+
+# Expected pre-implementation report
+
+Produce:
+
+1. Current WebSocket/session architecture relevant to presence.
+2. Exact definition of "active user" recommended for this MVP.
+3. Whether presence should attach at CONNECT or SUBSCRIBE.
+4. How workspaceId will be determined.
+5. How userId and user name will be resolved.
+6. Recommended in-memory data structure.
+7. Multi-tab/device semantics.
+8. Connect/disconnect lifecycle.
+9. Abnormal disconnect behavior.
+10. Duplicate disconnect handling.
+11. Authentication failure behavior.
+12. Initial presence snapshot mechanism.
+13. Realtime presence event contract.
+14. Snapshot/event race handling.
+15. Task 16 reconnect interaction.
+16. Frontend state model.
+17. Proposed UI.
+18. Whether current user appears and how.
+19. REST fallback behavior.
+20. Security/workspace-membership behavior.
+21. Task 15 metrics interaction.
+22. Whether a unique-active-users gauge should be added.
+23. Exact backend files to create/modify.
+24. Exact frontend files to create/modify.
+25. Tests to add.
+26. Documentation changes.
+27. Dependencies, if any.
+28. Known limitations.
+29. Production multi-instance evolution.
+30. Implementation sequence.
+
+End with explicit answers:
+
+A. What exactly makes a user active?
+
+B. How are two tabs from the same user represented?
+
+C. When exactly does a user become inactive?
+
+D. Is presence workspace-scoped?
+
+E. How does a newly connected client obtain the initial active-user list?
+
+F. What happens to presence during WebSocket reconnect?
+
+G. Are Redis or database persistence required for this prototype?
+
+H. Are any new dependencies required?
+
+Do NOT modify any files.
+
+Stop after the report and wait for approval.
+
+
+---
+Task 17 — Active Users / Presence: Pre-Implementation Report
+
+1. Current WebSocket/Session Architecture
+
+JwtChannelInterceptor (realtime/JwtChannelInterceptor.java):
+- Intercepts only CONNECT frames
+- Validates JWT from Authorization: Bearer <token> header using JwtDecoder
+- On success: calls accessor.setUser(new JwtAuthenticationToken(jwt, Collections.emptyList())) — the JwtAuthenticationToken.getName() returns the JWT sub claim, which is the userId UUID string
+- On failure: throws BadCredentialsException → STOMP ERROR frame sent → WebSocket closed → SessionConnectedEvent is never fired for rejected connections
+
+WebSocketConfig (realtime/WebSocketConfig.java):
+- Simple broker on /topic
+- STOMP endpoint: /ws (no SockJS)
+- JwtChannelInterceptor registered as inbound channel interceptor
+
+AreaEventRelay (realtime/AreaEventRelay.java):
+- @TransactionalEventListener(AFTER_COMMIT) publishes to /topic/workspace/{workspaceId} via SimpMessagingTemplate
+
+WebSocketSessionMetrics (metrics/WebSocketSessionMetrics.java):
+- @EventListener on SessionConnectedEvent → adds sessionId to ConcurrentHashMap.newKeySet()
+- @EventListener on SessionDisconnectEvent → removes sessionId (idempotent)
+- SessionConnectedEvent exposes: StompHeaderAccessor.wrap(event.getMessage()).getSessionId()
+- SessionDisconnectEvent exposes: event.getSessionId()
+
+SessionConnectedEvent carries the Principal: AbstractSubProtocolEvent.getUser() returns the JwtAuthenticationToken set by JwtChannelInterceptor, so event.getUser().getName() is the userId UUID string. This is confirmed by the Spring STOMP lifecycle — the user Principal from CONNECT is associated with the session and propagated to subsequent lifecycle events.
+
+SessionDisconnectEvent — safe assumption for Principal: Spring propagates the session Principal to disconnect events via the SimpMessageHeaderAccessor.USER_HEADER. However, to avoid any uncertainty, the PresenceService should maintain a reverse sessionId → userId map populated at connect time, rather than relying on event.getUser() at disconnect time.
+
+JWT payload (JwtIssuer.java:30): Contains only sub = userId.toString(), iss, iat, exp. No user name is in the JWT. Name resolution requires a UserRepository lookup.
+
+Prototype workspace: PrototypeProperties.workspaceId() is the single workspace UUID (00000000-0000-0000-0000-000000000002). All registered users are added as EDITORs of this workspace at registration time (AuthService.register()). The frontend hardcodes this same UUID in environment.workspaceId.
+
+Frontend AuthService (auth/auth.service.ts): Stores only the JWT token in localStorage. The user's {id, name} from the AuthResponse is discarded after login/register. No current mechanism exists to identify the logged-in user's name on the frontend without re-parsing the auth response.
+
+2. Definition of "Active User"
+
+Active user = authenticated user with at least one currently established STOMP/WebSocket session.
+
+Specifically: a user for whom SessionConnectedEvent has fired (STOMP handshake complete) and for whom no final SessionDisconnectEvent has yet fired for all their sessions.
+
+Not counted:
+- Users with a valid JWT in localStorage but no active WebSocket connection
+- Users who have made recent REST requests
+- Users whose CONNECT was rejected (bad/expired JWT)
+
+3. Attach at CONNECT or SUBSCRIBE?
+
+Attach at CONNECT (SessionConnectedEvent), not at SUBSCRIBE.
+
+Reasoning: In the current architecture, JwtChannelInterceptor ensures that every SessionConnectedEvent represents an authenticated session. The prototype has exactly one workspace, and the frontend immediately subscribes to /topic/workspace/{workspaceId} in its onConnect callback — the time between CONNECT and SUBSCRIBE is milliseconds and never crosses an authentication boundary.
+
+SUBSCRIBE-based presence would require parsing the destination path (e.g., /topic/workspace/00000000-0000-0000-0000-000000000002) to extract workspaceId, and listening to SessionSubscribeEvent. This adds complexity for no benefit in a single-workspace prototype.
+
+Workspace identity at CONNECT time: Since all authenticated sessions belong to the prototype workspace, the PresenceService uses PrototypeProperties.workspaceId() as the implicit workspace ID for all presence state. This is a documented prototype simplification; production multi-workspace presence would need workspace resolution at SUBSCRIBE time.
+
+4. How workspaceId is Determined
+
+PrototypeProperties.workspaceId() — injected into PresenceService and PresenceController. Not derived from the CONNECT or SUBSCRIBE frame. All presence state is implicitly scoped to the single prototype workspace.
+
+5. How userId and User Name are Resolved
+
+- userId: event.getUser().getName() on SessionConnectedEvent → JWT sub → UUID string → parsed as UUID
+- name: UserRepository.findById(userId) at connect time → User.getName()
+- One DB read per STOMP CONNECT event (infrequent; acceptable)
+- If user not found (edge case: orphaned JWT for deleted user), presence is not registered for that session; the connect is allowed to succeed (presence is best-effort)
+- Email: not exposed in presence data; name is sufficient for the map UI
+
+6. Recommended In-Memory Data Structure
+
+// Primary state: userId → set of active sessionIds
+ConcurrentHashMap<String, Set<String>> userSessions;
+// where each Set is ConcurrentHashMap.newKeySet()
+
+// Reverse lookup: sessionId → userId (for disconnect)
+ConcurrentHashMap<String, String> sessionToUser;
+
+// Name cache: userId → name (populated at connect, cleaned at last disconnect)
+ConcurrentHashMap<String, String> userNames;
+
+The reverse map avoids any reliance on the Principal being available in SessionDisconnectEvent. Both maps are ConcurrentHashMap for thread-safe concurrent connect/disconnect.
+
+On CONNECT (atomic via ConcurrentHashMap.compute):
+1. userSessions.compute(userId, (k, sessions) -> { ... sessions.add(sessionId); ... }) — detect if this is the first session (null entry)
+2. sessionToUser.put(sessionId, userId)
+3. userNames.put(userId, name) (idempotent for subsequent sessions)
+4. If first session for user: broadcast PRESENCE_JOINED
+
+On DISCONNECT (atomic via computeIfPresent):
+1. Look up userId = sessionToUser.remove(sessionId)
+2. userSessions.computeIfPresent(userId, (k, sessions) -> { sessions.remove(sessionId); return sessions.isEmpty() ? null : sessions; }) — atomic removal; null return removes the entry
+3. String removedName = result_was_null ? userNames.remove(userId) : null
+4. If entry was removed (last session): broadcast PRESENCE_LEFT
+
+This is correct under concurrent access. The compute/computeIfPresent operations on ConcurrentHashMap are atomic.
+
+7. Multi-Tab / Device Semantics
+
+Alice tab 1 CONNECT → userSessions.get("alice-id") = {session-1}  → PRESENCE_JOINED broadcast
+Alice tab 2 CONNECT → userSessions.get("alice-id") = {session-1, session-2}  → no broadcast
+Alice tab 1 DISCONNECT → userSessions.get("alice-id") = {session-2}  → no broadcast (still active)
+Alice tab 2 DISCONNECT → userSessions.get("alice-id") = null (removed)  → PRESENCE_LEFT broadcast
+
+Alice appears in the presence list exactly once throughout. The UI shows name (not sessionId) so multi-tab is transparent to other users.
+
+8. Connect/Disconnect Lifecycle
+
+Client STOMP CONNECT
+  → JwtChannelInterceptor validates JWT, sets Principal
+  → STOMP CONNECTED frame sent to client
+  → Spring fires SessionConnectedEvent
+  → PresenceService.join(sessionId, userId, name)
+    → if first session for userId: broadcast PRESENCE_JOINED to /topic/workspace/{id}/presence
+
+Client STOMP DISCONNECT (graceful)
+  → Spring fires SessionDisconnectEvent
+  → PresenceService.leave(sessionId)
+    → look up userId from sessionToUser
+    → remove sessionId from userSessions[userId]
+    → if set now empty: remove entry, broadcast PRESENCE_LEFT to /topic/workspace/{id}/presence
+
+9. Abnormal Disconnect Behavior
+
+Spring SimpleBroker uses heartbeats to detect dead connections. When a connection is lost abruptly (network failure, crash, browser tab closed), the STOMP heartbeat timeout causes the session to be closed server-side. This fires SessionDisconnectEvent with closeStatus = ABNORMAL_CLOSURE or similar. The PresenceService.leave() path is the same regardless of close reason.
+
+Result: Abnormal disconnects are handled correctly via the existing SessionDisconnectEvent mechanism. No grace period or heartbeat lease infrastructure is needed. The brief window between network loss and heartbeat timeout means a user may appear active for a few seconds after abnormal disconnect — acceptable for a prototype.
+
+10. Duplicate Disconnect Handling
+
+SessionDisconnectEvent may fire more than once for the same session (confirmed by WebSocketSessionMetrics javadoc). The PresenceService handles this correctly:
+- sessionToUser.remove(sessionId) returns null on the second call (sessionId already removed)
+- computeIfPresent on a non-existent key is a no-op
+- Result: second disconnect for same session → no state change, no duplicate PRESENCE_LEFT broadcast
+
+11. Authentication Failure Behavior
+
+When JwtChannelInterceptor rejects a CONNECT (bad/expired JWT):
+- Spring sends STOMP ERROR frame to client
+- WebSocket connection closes
+- SessionConnectedEvent is never fired (confirmed by WebSocketSessionMetrics javadoc)
+- SessionDisconnectEvent may fire for the closed connection; since no entry was added to sessionToUser, PresenceService.leave() is a no-op
+
+Result: rejected connections never appear in presence. ✓
+
+12. Initial Presence Snapshot Mechanism
+
+Recommendation: REST endpoint.
+
+GET /workspaces/{workspaceId}/presence
+Authorization: Bearer <token>
+→ 200 [{"id": "...", "name": "Alice"}, {"id": "...", "name": "Bob"}]
+
+Rationale: fits the existing REST-authoritative pattern (same design as area CRUD). Simple to implement, test, and consume. No new STOMP request/reply infrastructure needed.
+
+The frontend sequence after STOMP connect:
+1. onConnect fires → subscribe to /topic/workspace/{id} (area events) and /topic/workspace/{id}/presence (presence events)
+2. Call GET /workspaces/{workspaceId}/presence via REST → populate activeUsers map
+3. Merge any PRESENCE_JOINED/PRESENCE_LEFT events received since subscription was established (handled idempotently by user ID key)
+
+This ordering (subscribe before REST call) ensures no PRESENCE_JOINED events are missed between subscription and snapshot fetch. Any PRESENCE_JOINED event arriving for a user already in the snapshot is idempotent (map.set overwrites same value).
+
+13. Realtime Presence Event Contract
+
+Events are sent to a separate topic: /topic/workspace/{workspaceId}/presence
+
+This avoids mixing presence events with area events on the existing topic and prevents the existing area event handler from receiving presence messages.
+
+{
+  "type": "PRESENCE_JOINED",
+  "user": { "id": "uuid-string", "name": "Alice" }
+}
+
+{
+  "type": "PRESENCE_LEFT",
+  "user": { "id": "uuid-string", "name": "Alice" }
+}
+
+Java record:
+record PresenceEventMessage(String type, UserPresenceResponse user) {}
+record UserPresenceResponse(String id, String name) {}
+
+PRESENCE_JOINED is broadcast when a user's first session connects.
+PRESENCE_LEFT is broadcast when a user's last session disconnects.
+
+14. Snapshot/Event Race Handling
+
+The frontend stores active users in Map<string, UserPresence> keyed by userId (not an array). All updates are idempotent:
+- PRESENCE_JOINED for a user already in the map: map.set(id, user) — no duplicate
+- PRESENCE_LEFT for a user not in the map: map.delete(id) — no-op
+- REST snapshot: replace map with fresh data; subsequent events applied on top
+
+No sequence numbers or event ordering infrastructure is needed.
+
+15. Task 16 Reconnect Interaction
+
+Task 16 auto-reconnects with 3 s delay. Presence interaction:
+
+Alice DISCONNECT (network loss)
+  → SessionDisconnectEvent fires (after heartbeat timeout ~10 s)
+  → Alice leaves presence
+  → other clients receive PRESENCE_LEFT
+
+  [Task 16 reconnects]
+
+Alice CONNECT (reconnect succeeds)
+  → SessionConnectedEvent fires
+  → Alice re-joins presence
+  → other clients receive PRESENCE_JOINED
+
+Alice's own browser
+  → onReconnect() callback fires → loadViewport() + loadPresence()
+  → REST snapshot repopulates Alice's active-users list
+
+A brief leave/join transition is expected and acceptable. No grace period is needed.
+
+After reconnect, the onReconnect callback (already used for loadViewport()) should also call loadPresence() to refresh the presence snapshot. This handles the race where the snapshot could be stale after a prolonged disconnect.
+
+16. Frontend State Model
+
+In MapComponent:
+
+activeUsers = new Map<string, UserPresence>(); // userId → {id, name}
+
+Updates:
+- loadPresence() — REST call → replaces map contents
+- PRESENCE_JOINED event → activeUsers.set(user.id, user)
+- PRESENCE_LEFT event → activeUsers.delete(user.id)
+
+Map is the correct structure: O(1) lookup, automatic deduplication by userId, idempotent updates.
+
+On ngOnDestroy: realtimeService.disconnect() is already called; no presence cleanup needed on the frontend (the server handles it via SessionDisconnectEvent).
+
+17. Proposed UI
+
+A compact panel in the bottom-right corner (currently empty). Positioned above the Leaflet attribution bar.
+
+Active users (2)
+● Alice (you)
+● Bob
+
+- Small font, minimal footprint, does not obscure map controls
+- Bullet points, no avatars, no colors
+- Shows count in the header
+- (you) suffix for the current user (if user identity is available)
+- If only 1 user (self): shows "Active users (1) ● Alice (you)"
+- Empty state (0 active users): hide the panel entirely
+
+CSS class: .presence-panel, position: absolute; bottom: 60px; right: 16px; z-index: 1000;
+
+The bottom: 60px clears the Leaflet attribution bar. The right: 16px aligns with the existing .area-panel. The panel does not conflict with: draw controls (top-left), area panel (top-right), basemap switcher (bottom-left), logout button (top-left area), or reconnecting indicator (bottom-center).
+
+18. Current User Visibility and Identification
+
+The current user should appear in the active list — they are genuinely active.
+
+For the (you) indicator, AuthService must expose the current user's {id, name}. Currently it discards user info after login.
+
+Recommended change to AuthService:
+- Add a USER_KEY = 'snapland_dev_user' in localStorage
+- At login/register: localStorage.setItem(USER_KEY, JSON.stringify({id: res.user.id, name: res.user.name}))
+- getCurrentUser(): {id: string; name: string} | null — reads and parses from localStorage
+- At logout: localStorage.removeItem(USER_KEY)
+
+This persists across page refreshes. No JWT decoding needed. No new dependencies.
+
+19. REST Fallback Behavior
+
+If the WebSocket is disconnected (Task 16 reconnecting state):
+- Area CRUD via REST continues normally ✓
+- Presence events are not received during disconnect
+- activeUsers map becomes stale (shows pre-disconnect state)
+- On reconnect: loadPresence() is called, refreshing the snapshot
+- During disconnect: the stale presence list is shown as-is (no error indicator for presence)
+
+This is acceptable. The reconnecting banner (wsStatus === 'reconnecting') already informs the user that real-time updates are paused. Presence staleness is implied.
+
+20. Security and Workspace Membership
+
+REST endpoint security: GET /workspaces/{workspaceId}/presence requires a valid JWT. The existing anyRequest().authenticated() in SecurityConfig covers this — no additional requestMatchers are needed.
+
+WebSocket/event security: Presence events are broadcast to /topic/workspace/{workspaceId}/presence via SimpMessagingTemplate. The SimpleBroker only delivers messages to sessions that have subscribed to that topic. Since STOMP subscriptions require a prior authenticated CONNECT, only authenticated users receive presence events.
+
+Workspace membership check: The prototype does not enforce workspace membership in AreaService (documented known limitation). The presence endpoint will follow the same approach — authenticate the caller, use the prototype workspace ID from PrototypeProperties, and not check workspace membership explicitly. If the workspaceId in the path does not match the prototype workspace ID, return an empty list (presence state only exists for the prototype workspace). No 404 for unknown workspace (consistent with the existing prototype workspace handling pattern, though checking can be added if desired).
+
+Not exposed: session IDs, JWT contents, email addresses.
+
+21. Task 15 Metrics Interaction
+
+websocket.connections.active (Gauge) = number of active sessions (from WebSocketSessionMetrics).
+
+Active users = number of unique authenticated users with at least one active session.
+
+These measure different things (tabs/devices vs. unique humans). Both are valid.
+
+Recommendation: Do NOT add a websocket.users.active gauge for this task. Reason: presence is tracked by PresenceService internally; adding a Gauge backed by userSessions.size() is a one-liner but adds complexity for marginal observability benefit. The existing websocket.connections.active already gives a useful upper bound. Document the distinction in DESIGN.md instead.
+
+22. New Dependencies
+
+None. Everything needed is already available:
+- Spring WebSocket / STOMP (existing)
+- SimpMessagingTemplate (existing, used by AreaEventRelay)
+- SessionConnectedEvent / SessionDisconnectEvent (existing, used by WebSocketSessionMetrics)
+- UserRepository (existing)
+- PrototypeProperties (existing)
+- ConcurrentHashMap (JDK)
+
+23. Backend Files to Create / Modify
+
+New:
+- realtime/PresenceService.java — core state management + @EventListener handlers + broadcasting
+- realtime/PresenceController.java — GET /workspaces/{workspaceId}/presence
+- realtime/UserPresenceResponse.java — record (String id, String name)
+- realtime/PresenceEventMessage.java — record (String type, UserPresenceResponse user)
+
+Modified: None strictly required.
+- SecurityConfig.java — no change needed; anyRequest().authenticated() already covers the new REST endpoint
+- WebSocketConfig.java — no change needed; PresenceService uses @EventListener like WebSocketSessionMetrics
+
+24. Frontend Files to Create / Modify
+
+New:
+- realtime/presence.model.ts — export interface UserPresence { id: string; name: string; }
+- realtime/presence.service.ts — getPresence(workspaceId: string): Observable<UserPresence[]> (REST call)
+
+Modified:
+- auth/auth.service.ts — add getCurrentUser(), store/clear {id, name} in localStorage at login/register/logout
+- realtime/realtime.service.ts — add onPresenceEvent: (event: PresenceEventMessage) => void to connect() signature; add second STOMP subscription to /topic/workspace/{workspaceId}/presence in onConnect
+- map/map.ts — inject PresenceService; add activeUsers = new Map<string, UserPresence>(); add loadPresence(); extend connectToRealtime() to pass presence callback; extend onReconnect to also call loadPresence()
+- map/map.html — add .presence-panel with @for loop over activeUsers.values()
+- map/map.css — add .presence-panel, .presence-title, .presence-item styles
+
+25. Tests to Add
+
+Backend integration test — PresenceIntegrationTest.java:
+
+┌─────────────────┬────────────────────────────────────────────────────┬─────────────────────────────────────────────────────────────────┐
+│       ID        │                    Description                     │                            Mechanism                            │
+├─────────────────┼────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+│ TC-PRESENCE-001 │ Authenticated user appears after STOMP CONNECT     │ GET /presence after connect                                     │
+├─────────────────┼────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+│ TC-PRESENCE-002 │ Second distinct user appears; both returned        │ Connect user B; GET /presence shows A and B                     │
+├─────────────────┼────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+│ TC-PRESENCE-003 │ Disconnect removes user                            │ Disconnect; GET /presence is empty                              │
+├─────────────────┼────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+│ TC-PRESENCE-004 │ Two sessions for same user → one active user       │ Connect twice; GET /presence returns 1 entry                    │
+├─────────────────┼────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+│ TC-PRESENCE-005 │ Disconnect one of two sessions → user still active │ Disconnect session 1 of 2; GET /presence still shows user       │
+├─────────────────┼────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+│ TC-PRESENCE-006 │ Disconnect last session → user removed             │ Disconnect session 2 of 2; GET /presence is empty               │
+├─────────────────┼────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+│ TC-PRESENCE-007 │ Rejected CONNECT (invalid JWT) → no presence       │ Connect with bad JWT; GET /presence is empty                    │
+├─────────────────┼────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+│ TC-PRESENCE-008 │ Presence snapshot requires authentication          │ GET /presence without JWT → 401                                 │
+├─────────────────┼────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+│ TC-PRESENCE-009 │ Reconnect restores presence                        │ Disconnect then reconnect; GET /presence shows user again       │
+├─────────────────┼────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+│ TC-PRESENCE-010 │ Duplicate disconnect → no corruption, no negative  │ Simulate second disconnect for same sessionId; state consistent │
+├─────────────────┼────────────────────────────────────────────────────┼─────────────────────────────────────────────────────────────────┤
+│ TC-PRESENCE-011 │ Unknown workspaceId returns empty list             │ GET /workspaces/{unknown-id}/presence → 200 []                  │
+└─────────────────┴────────────────────────────────────────────────────┴─────────────────────────────────────────────────────────────────┘
+
+TC-PRESENCE-011 is achievable: since presence state is only kept for the prototype workspace, any other workspace ID will simply return an empty list.
+
+Frontend tests: No frontend test infrastructure exists (frontend tests: not implemented per README). No new testing framework will be introduced for this task. Manual tests cover presence behavior.
+
+Manual UI tests (added to TEST_CASES.md as TC-PRESENCE-UI-001 through -006):
+- Alice and Bob in separate browsers/incognito sessions
+- Alice tabs 1 and 2 (multi-tab)
+- Presence list updates in real time on connect/disconnect
+- Reconnect restores presence
+
+26. Documentation Changes
+
+README.md:
+- Features table: add "Active users / presence indicator" row
+- Real-Time Collaboration section: add presence paragraph
+- Known Limitations: note single-instance in-memory presence (cleared on restart)
+- Production / Scaling: add presence evolution (Redis shared presence store)
+- Testing: update test count
+
+docs/DESIGN.md:
+- New "Presence" subsection under Security & Observability (or Real-Time section):
+  - Definition of active user
+  - Data structure and lifecycle
+  - Session/user relationship (n sessions → 1 user)
+  - Single-instance limitation
+  - Multi-instance production evolution note
+
+docs/TEST_CASES.md:
+- Update scope list
+- Add TC-PRESENCE-001 through -011 (API black-box)
+- Add TC-PRESENCE-UI-001 through -006 (UI manual)
+
+27. Known Limitations
+
+- Presence state is cleared on backend restart (ephemeral in-process)
+- Multi-instance deployments cannot share presence without Redis (documented as future work)
+- Heartbeat timeout delay (~10 s default) means a user may appear active briefly after abnormal disconnect
+- If a user's JWT expires while connected, their WebSocket session may remain active until the next reconnect cycle; the Task 16 reconnect will eventually detect the expiry and call deactivate(), at which point SessionDisconnectEvent fires and presence is cleaned up
+
+28. Production Multi-Instance Evolution
+
+Documented as future work, not implemented now:
+
+Backend instance 1                  Backend instance 2
+  SessionConnectedEvent               SessionConnectedEvent
+       ↓                                     ↓
+  PresenceService (in-memory)         PresenceService (in-memory)
+       ↓                                     ↓
+  Publish to shared Redis             Publish to shared Redis
+  Presence Store (HSET/SREM)          Presence Store (HSET/SREM)
+       ↓                                     ↓
+  Publish PRESENCE_JOINED/LEFT event via Redis Pub/Sub
+       ↓                                     ↓
+  All instances receive event → SimpMessagingTemplate to local subscribers
+
+The in-process ConcurrentHashMap design is easily replaced by Redis Hash operations (HSET workspace:{id}:presence:{userId} session:{sid} "", HDEL, HKEYS). The PresenceService interface does not need to change — only the backing store.
+
+29. Implementation Sequence
+
+1. Backend: UserPresenceResponse, PresenceEventMessage records
+2. Backend: PresenceService (state, events, @EventListeners, broadcasting)
+3. Backend: PresenceController (GET /workspaces/{workspaceId}/presence)
+4. Backend: PresenceIntegrationTest — run and verify 130+ tests pass
+5. Frontend: UserPresence model, PresenceService (REST call)
+6. Frontend: AuthService — add getCurrentUser(), store user info at login
+7. Frontend: RealtimeService — add presence subscription, onPresenceEvent callback
+8. Frontend: MapComponent — integrate presence state and loadPresence()
+9. Frontend: map.html + map.css — presence panel
+10. Frontend: production build — verify no errors
+11. Documentation: README, DESIGN.md, TEST_CASES.md
+
+---
+Explicit Answers
+
+A. What exactly makes a user active?
+A successful authenticated STOMP CONNECT, evidenced by SessionConnectedEvent. The user remains active while at least one such session is open (no corresponding SessionDisconnectEvent for all their sessions).
+
+B. How are two tabs from the same user represented?
+The PresenceService maps userId → Set<sessionId>. Two tabs create two entries in the set but the user appears once in the active list. PRESENCE_JOINED fires only on the first session. PRESENCE_LEFT fires only when the last session closes.
+
+C. When exactly does a user become inactive?
+When SessionDisconnectEvent fires for their last remaining session (the userSessions.computeIfPresent() call returns null, atomically removing the entry). This covers both graceful disconnect and heartbeat-detected abrupt close.
+
+D. Is presence workspace-scoped?
+Yes, logically — but implemented as single-workspace in this prototype using PrototypeProperties.workspaceId(). All sessions are implicitly in the prototype workspace. The REST endpoint path includes workspaceId for future compatibility.
+
+E. How does a newly connected client obtain the initial active-user list?
+GET /workspaces/{workspaceId}/presence REST call, made after the STOMP subscription to /topic/workspace/{workspaceId}/presence is established (subscribe first to avoid missing events, then fetch snapshot).
+
+F. What happens to presence during WebSocket reconnect (Task 16)?
+On disconnect: SessionDisconnectEvent fires → user eventually leaves presence → PRESENCE_LEFT event broadcast. On reconnect: SessionConnectedEvent fires → user re-joins → PRESENCE_JOINED broadcast. The user's own browser calls loadPresence() in the onReconnect callback to refresh the snapshot. A brief leave/join transition is expected and acceptable.
+
+G. Are Redis or database persistence required for this prototype?
+No. All presence state is in-process ConcurrentHashMap. PostgreSQL is not used. Redis is not introduced.
+
+H. Are any new dependencies required?
+No. All required libraries are already in the classpath.
+
+
+
+
+
+
+The pre-implementation plan is approved with three corrections:
+
+1. Fix the snapshot/event race.
+
+The proposed "subscribe → GET snapshot → replace map" flow is not by itself
+race-safe.
+
+Example:
+- GET snapshot begins
+- Alice disconnects
+- PRESENCE_LEFT(Alice) arrives and removes Alice
+- stale GET response containing Alice arrives afterward
+- replacing the map incorrectly restores Alice
+
+Do not add sequence numbers.
+
+Use a minimal mechanism such as buffering presence events while the initial
+snapshot/reconnect snapshot is in flight, then:
+
+    subscribe
+    start snapshot
+    buffer incoming presence events
+    replace state with snapshot
+    replay buffered events in arrival order
+    return to normal event processing
+
+Design the smallest implementation that guarantees this behavior.
+
+2. Do not automatically define an unknown workspace as 200 [].
+
+Inspect the existing Area API/workspace semantics and follow the project's
+existing error contract.
+
+The presence endpoint must distinguish:
+- valid workspace with zero active users
+- invalid/unknown/unsupported workspace
+
+Prefer the existing 404/error behavior if that is how the rest of the API
+handles an unknown workspace.
+
+Update TC-PRESENCE-011 accordingly.
+
+3. The "(you)" indicator is optional.
+
+Do not expand AuthService/localStorage solely to render "(you)" unless there
+is already a clean need for current-user information.
+
+A minimal UI:
+
+    Active users (2)
+    Alice
+    Bob
+
+fully satisfies Task 17.
+
+Prefer avoiding the AuthService change if it serves no functional purpose
+beyond the decorative "(you)" label.
+
+With these corrections, proceed with implementation.
+
+Preserve all other approved scope constraints:
+- single-instance in-memory presence
+- userId → multiple session IDs
+- first session => JOINED
+- last session => LEFT
+- REST snapshot + WebSocket incremental events
+- no Redis
+- no DB persistence
+- no new dependencies
+- no cursor/drawing presence
+- no frontend testing framework
+
+After implementation run the complete backend test suite and frontend
+production build, update README.md / DESIGN.md / TEST_CASES.md, and provide
+the actual test count and any deviations from the approved plan.

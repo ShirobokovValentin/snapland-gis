@@ -1,6 +1,7 @@
 import { Injectable } from '@angular/core';
 import { Client } from '@stomp/stompjs';
 import { AreaEventMessage } from '../area/area.model';
+import { PresenceEventMessage } from './presence.model';
 import { environment } from '../../environments/environment';
 import { AuthService } from '../auth/auth.service';
 
@@ -15,6 +16,7 @@ export class RealtimeService {
     onEvent: (event: AreaEventMessage) => void,
     onReconnect: () => void,
     onStatusChange: (status: 'connected' | 'reconnecting') => void,
+    onPresenceEvent: (event: PresenceEventMessage) => void,
   ): void {
     let firstConnect = true;
     this.client = new Client({
@@ -37,6 +39,10 @@ export class RealtimeService {
         this.client!.subscribe(`/topic/workspace/${workspaceId}`, (message) => {
           const event: AreaEventMessage = JSON.parse(message.body);
           onEvent(event);
+        });
+        this.client!.subscribe(`/topic/workspace/${workspaceId}/presence`, (message) => {
+          const event: PresenceEventMessage = JSON.parse(message.body);
+          onPresenceEvent(event);
         });
         onStatusChange('connected');
         if (!firstConnect) {

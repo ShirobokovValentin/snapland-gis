@@ -1765,6 +1765,26 @@ The frontend `RealtimeService` uses `@stomp/stompjs` with automatic reconnect (3
 
 **Intentional-disconnect guard:** `disconnect()` sets `this.client = null` synchronously before calling `deactivate()`. The `onWebSocketClose` callback checks `this.client !== null` before calling `onStatusChange('reconnecting')`, preventing a spurious "Reconnecting" banner after deliberate logout or component destroy.
 
+#### Active Users / Presence
+
+**Semantics:** A user is "active" while they have at least one live STOMP session. Multiple browser tabs or devices for the same user collapse to a single presence entry (userId → `Set<sessionId>`).
+
+**Lifecycle events:**
+- `PRESENCE_JOINED` — broadcast when the first session for a user connects.
+- `PRESENCE_LEFT` — broadcast when the last session for a user disconnects.
+
+Both events are delivered on the per-workspace presence topic: `/topic/workspace/{workspaceId}/presence`.
+
+**Session/user mapping:** `PresenceService` maintains three `ConcurrentHashMap` structures: `userId → Set<sessionId>` (multi-tab tracking), `sessionId → userId` (reverse lookup for disconnect), and `userId → displayName` (resolved once via `UserRepository` at first connect, released at last disconnect). Atomic first/last detection uses `ConcurrentHashMap.compute()` / `computeIfPresent()` (returning `null` atomically removes the entry).
+
+**Snapshot REST endpoint:** `GET /workspaces/{workspaceId}/presence` returns the current active-user list as `[{id, name}]`. Returns `404 WORKSPACE_NOT_FOUND` for unknown workspace IDs (same contract as area endpoints). Requires authentication.
+
+**Race-safe snapshot on the frontend:** On (re)connect, the frontend calls `loadPresence()`, setting `presenceLoading = true` and buffering incoming presence events. When the snapshot response arrives, state is replaced by the snapshot, the buffer is replayed in order, and `presenceLoading = false`. JavaScript's single-threaded event loop ensures the buffer is consistent with respect to event ordering.
+
+**Single-instance limitation:** Presence state is held in-process in `PresenceService`. Users connected to different backend instances will not see each other. Multi-instance presence requires a shared store (e.g., Redis sorted sets or hash maps keyed by userId) and cross-instance event delivery via Redis Pub/Sub. This evolution is described in the design but deferred.
+
+**Persistence:** Presence state is ephemeral (not persisted to PostgreSQL). It is derived from live session state and is cleared on application restart. PostgreSQL remains the source of truth for all persistent application state.
+
 ### Health Checks
 
 Services expose Liveness and Readiness health checks.

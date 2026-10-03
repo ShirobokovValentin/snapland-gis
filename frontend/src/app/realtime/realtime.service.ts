@@ -22,9 +22,12 @@ export class RealtimeService {
     this.onOffline = () => onStatusChange('reconnecting');
     window.addEventListener('offline', this.onOffline);
 
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const brokerURL = environment.wsUrl || `${wsProtocol}//${window.location.host}/ws`;
+
     let firstConnect = true;
     this.client = new Client({
-      brokerURL: environment.wsUrl,
+      brokerURL,
       reconnectDelay: 3000,
       heartbeatIncoming: 5000,
       heartbeatOutgoing: 5000,

@@ -156,6 +156,12 @@ expose health endpoints. Error logging and monitoring must be provided.
 >
 > Memory is proportional to the number of distinct users who have made mutation attempts in any window. Opportunistic cleanup runs every 128 operations to remove entries for expired windows. This is sufficient for a prototype; a production deployment should move rate limiting to the API Gateway with a shared backing store (e.g., Redis sliding window).
 
+> **Prototype Local Deployment Note:** The repository includes a `docker-compose.yml` that supports two startup modes from a single file.
+>
+> *Full-stack mode* (`docker compose up --build`) starts all four services: `postgres`, `redis`, `backend`, and `frontend`. The Angular application is served by an nginx container on port 4201. nginx proxies REST requests (`/api/*` → backend, stripping the `/api` prefix) and WebSocket connections (`/ws` → backend) so that all browser-facing traffic enters through a single host and port. The backend port (8081) remains exposed for direct Swagger UI and diagnostic access. Flyway migrations run automatically on backend startup; no manual database setup is required.
+>
+> *Infrastructure-only mode* (`docker compose up -d postgres redis`) starts only the database and Redis, allowing the backend and frontend to run directly on the developer's machine with IDE support and hot reload. The Angular dev server's proxy configuration (`proxy.conf.json`) handles the same `/api/*` → `localhost:8081` rewrite for REST; WebSocket connects directly to `ws://localhost:8081/ws`. The two modes are transparent to the application: the Angular production build uses the same `/api` URL prefix in both cases; the WebSocket URL is derived from the browser's current host when not overridden by the development environment file.
+
 ## Domain Entities
 
 User --- System user {id, name, email, created_at}

@@ -23,3 +23,29 @@ services:
       interval: 5s
       timeout: 3s
       retries: 5
+
+  backend:
+    build: ./backend
+    ports:
+      - "8081:8081"
+    environment:
+      SPRING_PROFILES_ACTIVE: dev
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/snapland_gis
+      SPRING_DATASOURCE_USERNAME: snapland
+      SPRING_DATASOURCE_PASSWORD: snapland
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL", "curl -sf http://localhost:8081/actuator/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 8
+      start_period: 60s
+
+  frontend:
+    build: ./frontend
+    ports:
+      - "4201:80"
+    depends_on:
+      - backend

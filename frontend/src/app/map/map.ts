@@ -8,8 +8,8 @@ import {
 } from '@angular/core';
 import { DatePipe, DecimalPipe } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import './leaflet-init';
 import * as L from 'leaflet';
-import 'leaflet-draw';
 import { ActivatedRoute, Router } from '@angular/router';
 import { AreaService } from '../area/area.service';
 import { Area, AreaEventMessage, AreaVersionResponse, DeletedArea } from '../area/area.model';

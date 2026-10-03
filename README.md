@@ -34,6 +34,7 @@ This repository is a take-home assignment implementing a simplified, prototype-g
 | Password-based authentication | Not implemented — prototype only |
 | GovMap integration | Not implemented — see [Map Providers](#map-providers) |
 | OpenAPI / Swagger UI | Implemented — `/swagger-ui/index.html` and `/v3/api-docs`; JWT bearer auth in Swagger UI |
+| Docker support — full application and infrastructure-only modes | Implemented — single `docker-compose.yml`; `docker compose up --build` for full stack; `docker compose up -d postgres redis` for infra-only |
 | Frontend tests | Not implemented |
 
 ---
@@ -68,21 +69,45 @@ This repository is a take-home assignment implementing a simplified, prototype-g
 | | |
 |--|--|
 | Database | `postgis/postgis:16-3.4` (Docker) |
-| Cache / Pub/Sub | Redis 7-alpine (Docker — not yet wired to the application) |
+| Cache / Pub/Sub | Redis `7-alpine` (Docker — not yet wired to the application) |
+| Frontend serving | nginx `alpine` (Docker — full-stack mode only) |
+| Container orchestration | Docker Compose |
 
 ---
 
 ## Architecture Overview
 
+**Active development (Mode 2):**
+
 ```mermaid
 graph TD
     Browser["Browser\n(Angular 22 + Leaflet)"]
+    AngularDev["Angular dev server\n(:4201)"]
     Backend["Backend\n(Spring Boot 3.5.3  :8081)"]
     PG["PostgreSQL 16 + PostGIS 3.4\n(:5433)"]
     Redis["Redis 7\n(:6379)\nnot wired yet"]
 
-    Browser -->|"REST /api/*\n(dev proxy → :8081)"| Backend
+    Browser -->|"http://localhost:4201"| AngularDev
+    AngularDev -->|"/api/* → strips prefix → :8081"| Backend
     Browser -->|"STOMP ws://localhost:8081/ws"| Backend
+    Backend -->|"JPA / SQL"| PG
+    Backend -.->|"future Pub/Sub"| Redis
+```
+
+**Full Docker (Mode 1):**
+
+```mermaid
+graph TD
+    Browser["Browser"]
+    Nginx["nginx\n(:4201)"]
+    Backend["backend container\n(:8081 also exposed)"]
+    PG["postgres container\n(:5433)"]
+    Redis["redis container\n(:6379)"]
+
+    Browser -->|"http://localhost:4201"| Nginx
+    Nginx -->|"/api/* → strips prefix → backend:8081"| Backend
+    Nginx -->|"/ws → backend:8081/ws\n(WebSocket upgrade)"| Backend
+    Nginx -->|"/ → Angular SPA"| Nginx
     Backend -->|"JPA / SQL"| PG
     Backend -.->|"future Pub/Sub"| Redis
 ```
@@ -93,7 +118,7 @@ The backend exposes:
 - A WebSocket endpoint at `/ws` (STOMP protocol) for real-time area and workspace events.
 - Authentication endpoints at `/auth/register` and `/auth/login`.
 
-The Angular frontend proxies REST calls through the Angular dev server (`/api` → `http://localhost:8081`) and connects to the WebSocket URL directly.
+In both modes, the browser always uses `/api/*` for REST and the WebSocket connects to the same host that serves the Angular app. In active-development mode the Angular dev server handles the routing; in full Docker mode nginx handles it.
 
 ---
 
@@ -268,27 +293,57 @@ All endpoints require a valid JWT in the `Authorization: Bearer <token>` header,
 | `GET` | `/actuator/health` | Liveness / readiness |
 | `GET` | `/actuator/prometheus` | Prometheus metrics scrape endpoint |
 
-There is no OpenAPI / Swagger UI.
-
 ---
 
 ## Running Locally
 
-### Prerequisites
+Two startup modes are supported from the same `docker-compose.yml`.
 
-| Tool | Version |
-|------|---------|
-| Docker + Docker Compose | Any recent |
-| Java | 21 |
-| Maven | Use `./mvnw` wrapper (no separate install needed) |
-| Node.js | ≥ 20.19.0 |
-| npm | Bundled with Node.js |
+---
 
-### Step 1 — Start infrastructure
+### Mode 1 — Quick Start (Full Docker)
+
+**Prerequisites:** Docker + Docker Compose. No Java, Node, or local database required.
 
 ```bash
-docker compose up -d
+docker compose up --build
 ```
+
+This builds and starts all four services: `postgres`, `redis`, `backend`, `frontend`.
+
+Open **http://localhost:4201** in a browser.
+
+**Shutdown:**
+
+```bash
+docker compose down
+```
+
+**Full clean reset** (⚠ deletes the local PostgreSQL data volume):
+
+```bash
+docker compose down -v
+```
+
+The first build downloads Maven, all Java dependencies, and all npm packages — expect several minutes. Subsequent builds use Docker layer cache and are faster unless `pom.xml` or `package-lock.json` change.
+
+> **Note:** Tests are not run during the Docker image build (`-DskipTests`). Run the test suite separately with `./mvnw test` as described in the [Testing](#testing) section.
+
+---
+
+### Mode 2 — Active Development (Infrastructure Only)
+
+**Prerequisites:** Docker + Docker Compose, Java 21, Node.js ≥ 20.19.0.
+
+This mode is recommended during development because it preserves IDE debugging, backend restart speed, and Angular hot reload.
+
+**Step 1 — Start infrastructure:**
+
+```bash
+docker compose up -d postgres redis
+```
+
+This starts only `postgres` and `redis`. The `backend` and `frontend` services are not started.
 
 Wait until postgres is healthy:
 
@@ -296,11 +351,11 @@ Wait until postgres is healthy:
 docker compose ps
 ```
 
-The `postgres` container must reach `(healthy)` before the backend can connect. Redis starts alongside postgres but is not used by the application in the current implementation.
+The `postgres` container must reach `(healthy)` before the backend can connect. Redis starts alongside postgres but is not yet wired to the application.
 
-### Step 2 — Start the backend
+**Step 2 — Start the backend:**
 
-The `dev` Spring profile supplies all required secrets and seeds the database with a development user. No environment variables are required for local development.
+The `dev` Spring profile supplies all required secrets. No environment variables are required.
 
 ```bash
 cd backend
@@ -317,7 +372,7 @@ curl http://localhost:8081/actuator/health
 
 Expected response: `{"status":"UP",...}`
 
-### Step 3 — Start the frontend
+**Step 3 — Start the frontend:**
 
 ```bash
 cd frontend
@@ -329,14 +384,18 @@ Open **http://localhost:4201** in a browser.
 
 The dev server proxies `/api/*` requests to `http://localhost:8081`. WebSocket connects directly to `ws://localhost:8081/ws`.
 
+---
+
 ### Authentication and workspace flow
 
 1. Open http://localhost:4201 — the auth guard redirects unauthenticated users to `/auth`.
 2. Enter any email address and a display name to register.
 3. To log in as an existing user, enter the same email on the login screen.
 4. A JWT is stored in `sessionStorage` (per-tab) and attached to all subsequent requests.
-5. After login, the app redirects to `/workspaces` where you can create a workspace or open an existing one.
+5. After login, the app redirects to `/workspaces`. On a fresh database the workspace list is empty — create a workspace to start.
 6. Selecting a workspace opens the map at `/workspaces/:workspaceId/map`.
+
+Opening the same workspace in a second browser tab or window shows real-time presence for both sessions.
 
 ---
 
@@ -523,6 +582,7 @@ These are deliberate prototype constraints, not defects.
 | In-process rate limiter only | Drawing action rate limit is single-JVM and resets on restart; not effective across multiple instances |
 | Audit trail covers Area mutations only | Non-Area activity (login, read requests) has no dedicated persistent audit trail. User registration is implicitly recorded by `users.created_at`. Login has no persistent trace. |
 | Prometheus endpoint is unauthenticated | `/actuator/prometheus` is permit-all as a prototype simplification. In production, restrict to an internal network, a separate management port, or an infrastructure ACL. |
+| PostGIS image on Apple Silicon | `postgis/postgis:16-3.4` is amd64-only and runs under Rosetta 2 emulation on Apple Silicon (arm64). Docker prints a platform warning but the container functions correctly for local development. |
 
 ### Geographic Caching
 
@@ -549,6 +609,8 @@ The design document (`docs/DESIGN.md`) describes the intended production path. W
 ```
 snapland-gis/
 ├── backend/
+│   ├── Dockerfile
+│   ├── .dockerignore
 │   ├── src/main/java/com/snapland/gis/
 │   │   ├── area/          # Area entity, repository, service, controller, DTOs
 │   │   ├── auth/          # AuthService, AuthController, JwtIssuer, DTOs
@@ -565,6 +627,9 @@ snapland-gis/
 │       ├── application-dev.yml
 │       └── db/migration/
 ├── frontend/
+│   ├── Dockerfile
+│   ├── .dockerignore
+│   ├── nginx.conf
 │   └── src/app/
 │       ├── area/          # AreaService, area model, edit-panel component
 │       ├── auth/          # AuthService, AuthComponent, authGuard, authInterceptor

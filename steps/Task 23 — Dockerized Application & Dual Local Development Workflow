@@ -1,0 +1,971 @@
+Task 23 — Dockerized Application & Dual Local Development Workflow
+
+Goal
+
+Add Docker support so Snapland GIS supports two simple startup modes from the SAME docker-compose.yml:
+
+1. Complete application — default/reproducible mode
+
+       docker compose up --build
+
+   Starts:
+
+       PostgreSQL/PostGIS
+       Redis
+       Spring Boot backend
+       Angular frontend
+
+2. Infrastructure-only — normal active development
+
+       docker compose up -d postgres redis
+
+   Starts only:
+
+       PostgreSQL/PostGIS
+       Redis
+
+   The developer then runs backend/frontend directly on the host using IntelliJ/Maven and npm.
+
+Do NOT use Docker Compose profiles.
+
+Do NOT create duplicate Compose files merely to support these two modes.
+
+The existing fast local development workflow must remain fully supported.
+
+Before making changes, inspect the actual current:
+
+- docker-compose.yml
+- backend configuration
+- frontend configuration
+- Angular build configuration/output
+- Spring profiles
+- ports
+- environment variables
+- REST URLs
+- CORS configuration
+- WebSocket/STOMP configuration
+- Swagger configuration from Task 22
+
+Do not guess paths, ports, property names, Angular dist locations, or WebSocket endpoints.
+
+---
+
+## 1. Required startup modes
+
+### Complete application
+
+The primary reproducible/demo startup command must be:
+
+    docker compose up --build
+
+It must start:
+
+    postgres
+    redis
+    backend
+    frontend
+
+After startup, the user should be able to open:
+
+    http://localhost:4201
+
+and use the application.
+
+This is the expected workflow for:
+
+- first-time project startup
+- reviewer/demo usage
+- clean-start verification
+- machines with Docker but without locally installed Java/Node/PostgreSQL
+
+### Infrastructure-only development
+
+The recommended active-development command must be:
+
+    docker compose up -d postgres redis
+
+This must start only:
+
+    postgres
+    redis
+
+Backend is then run directly:
+
+    cd backend
+    ./mvnw spring-boot:run -Dspring-boot.run.profiles=dev
+
+Frontend is then run directly:
+
+    cd frontend
+    npm start
+
+This workflow must preserve:
+
+- IntelliJ debugging
+- Java breakpoints
+- fast backend restart
+- Angular hot reload
+- normal frontend development tooling
+
+Docker must NOT become mandatory for running backend/frontend during active development.
+
+---
+
+## 2. Docker Compose
+
+Modify the existing:
+
+    docker-compose.yml
+
+Do NOT introduce Compose profiles.
+
+Do NOT create docker-compose.dev.yml / docker-compose.full.yml unless a concrete technical blocker makes a single Compose file impossible.
+
+The final service structure should be:
+
+    services:
+      postgres
+      redis
+      backend
+      frontend
+
+All four services are normal Compose services.
+
+Therefore:
+
+    docker compose up --build
+
+starts everything.
+
+But Compose service selection:
+
+    docker compose up -d postgres redis
+
+starts infrastructure only.
+
+Preserve existing PostgreSQL/PostGIS and Redis configuration where possible.
+
+---
+
+## 3. Backend Dockerfile
+
+Create:
+
+    backend/Dockerfile
+
+Use a multi-stage build.
+
+Requirements:
+
+- Java 21
+- use the existing Maven Wrapper
+- do not require Maven to be installed in the image separately
+- build the Spring Boot executable jar
+- final runtime image should contain only what is required to run the application
+- do not include source code/build tooling unnecessarily in the runtime image
+- expose the actual backend port
+- run the generated Spring Boot jar
+
+Conceptually:
+
+    JDK build stage
+        ↓
+    ./mvnw package
+        ↓
+    JRE runtime stage
+        ↓
+    java -jar app.jar
+
+Do not hard-code a version-specific jar filename if a safe deterministic alternative exists.
+
+Do not run the complete test suite during every Docker image build if this unnecessarily duplicates normal verification. If tests are skipped during image creation, document that tests are executed separately as part of verification.
+
+Add:
+
+    backend/.dockerignore
+
+Exclude at least as appropriate:
+
+- target/
+- IDE metadata
+- Git metadata
+- temporary files
+
+Do not exclude files required by Maven Wrapper or the application build.
+
+---
+
+## 4. Backend configuration inside Docker
+
+This is a critical requirement.
+
+When backend runs directly on the host, existing dev configuration may use:
+
+    localhost:5433
+    localhost:6379
+
+That must continue working.
+
+When backend runs inside Docker, it must use Docker Compose service DNS:
+
+    postgres:5432
+    redis:6379
+
+Do NOT change host-development configuration to Docker hostnames.
+
+Prefer environment-variable overrides in docker-compose.yml.
+
+Inspect the actual Spring Boot version and existing configuration before selecting exact property names.
+
+Use the correct existing properties/environment variables for:
+
+- datasource URL
+- datasource username
+- datasource password
+- Redis host
+- Redis port
+- any other environment-specific values genuinely required
+
+Conceptually:
+
+    host development:
+        PostgreSQL → localhost:5433
+        Redis      → localhost:6379
+
+    Docker backend:
+        PostgreSQL → postgres:5432
+        Redis      → redis:6379
+
+Do not duplicate application configuration unnecessarily.
+
+---
+
+## 5. PostgreSQL/PostGIS startup
+
+Preserve the existing PostGIS image unless there is a concrete compatibility problem.
+
+The full Docker workflow must work against a completely empty PostgreSQL volume.
+
+Expected startup:
+
+    PostgreSQL starts
+        ↓
+    healthcheck succeeds
+        ↓
+    backend starts
+        ↓
+    Flyway executes all migrations
+        ↓
+    Spring Boot becomes healthy
+
+Use the existing PostgreSQL healthcheck if it is correct.
+
+Configure backend dependency using:
+
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+if supported by the existing Compose setup.
+
+No SQL should need to be manually executed.
+
+Do not seed a mandatory prototype workspace.
+
+---
+
+## 6. Redis startup
+
+Preserve the existing Redis service and healthcheck where possible.
+
+Containerized backend must connect to:
+
+    redis:6379
+
+Host-run backend must continue using:
+
+    localhost:6379
+
+Do not introduce:
+
+- Redis Cluster
+- Redis Sentinel
+- Redis Pub/Sub architecture changes
+- Azure Redis
+- any production Redis topology
+
+This task is packaging/deployment only.
+
+---
+
+## 7. Frontend Dockerfile
+
+Create:
+
+    frontend/Dockerfile
+
+Use a multi-stage build:
+
+    compatible Node image
+        ↓
+    npm ci
+        ↓
+    Angular production build
+        ↓
+    nginx runtime image
+
+Inspect:
+
+    frontend/package.json
+    frontend/angular.json
+
+before selecting:
+
+- Node version
+- build command
+- Angular output directory
+
+Do NOT guess the dist path.
+
+Copy only the actual Angular browser build output into nginx.
+
+Add:
+
+    frontend/.dockerignore
+
+Exclude as appropriate:
+
+- node_modules/
+- dist/
+- .angular/
+- IDE metadata
+- Git metadata
+- temporary files
+
+---
+
+## 8. nginx configuration
+
+Create the minimum nginx configuration required to serve the Angular SPA.
+
+Angular client-side routes must work after browser refresh.
+
+For example, a direct browser request to:
+
+    /workspaces/{workspaceId}/map
+
+must return Angular index.html instead of nginx 404.
+
+Use the equivalent of:
+
+    try_files $uri $uri/ /index.html;
+
+within the correct nginx configuration.
+
+Do not introduce unnecessary nginx features.
+
+---
+
+## 9. Backend proxy through nginx
+
+Prefer using the frontend nginx container as the browser-facing entry point for backend communication where this can be done without redesigning the application.
+
+Desired conceptual topology:
+
+    Browser
+       │
+       ▼
+    localhost:4201
+       │
+       ▼
+    nginx
+       ├── Angular static files
+       ├── REST → backend:8081
+       └── WebSocket → backend:8081
+
+This avoids exposing Docker-internal hostnames to browser JavaScript.
+
+However:
+
+Inspect the ACTUAL current REST paths first.
+
+Do NOT introduce a new /api prefix merely for Docker if the application currently does not have one.
+
+Do NOT rename REST endpoints.
+
+Do NOT redesign routing.
+
+If transparent proxying would require significant application changes, choose the smallest safe solution and explain the tradeoff.
+
+---
+
+## 10. WebSocket/STOMP proxy
+
+Existing realtime functionality must work in full Docker mode.
+
+Inspect the actual WebSocket endpoint first.
+
+If the endpoint is:
+
+    /ws
+
+configure nginx to proxy it to:
+
+    backend:8081
+
+with correct WebSocket upgrade behavior.
+
+Conceptually:
+
+    proxy_http_version 1.1
+    Upgrade
+    Connection upgrade
+
+Use the actual current endpoint and nginx syntax.
+
+Verify that Docker mode preserves:
+
+- STOMP connection
+- JWT authentication
+- reconnect
+- browser offline handling
+- STOMP heartbeats
+- Area realtime events
+- Presence events
+- workspace-scoped presence
+- reconnect reconciliation
+
+Do NOT change WebSocket semantics as part of this task.
+
+---
+
+## 11. Frontend REST/WebSocket configuration
+
+Inspect how Angular currently determines:
+
+- REST backend URL
+- WebSocket URL
+
+The same source code must support both:
+
+### Host development
+
+    Angular dev server
+        ↓
+    backend on localhost:8081
+
+### Full Docker
+
+    Browser
+        ↓
+    nginx
+        ↓
+    backend container
+
+Browser JavaScript must NEVER attempt to access:
+
+    http://backend:8081
+
+because "backend" is only resolvable inside the Docker network.
+
+Prefer relative browser-facing URLs where practical.
+
+If Angular dev-server proxy configuration is already present or would simplify having one URL strategy, inspect and use it only if appropriate.
+
+Do not introduce an elaborate runtime configuration mechanism unless genuinely necessary.
+
+---
+
+## 12. Ports
+
+Preserve the current documented ports unless there is a concrete conflict.
+
+Expected external mapping is approximately:
+
+    frontend:
+        localhost:4201 → nginx:80
+
+    backend:
+        localhost:8081 → backend:8081
+
+    postgres:
+        localhost:5433 → postgres:5432
+
+    redis:
+        localhost:6379 → redis:6379
+
+Use the actual current project ports after inspection.
+
+Keep backend 8081 exposed even if nginx proxies application requests because direct backend access is useful for:
+
+- Swagger
+- curl
+- diagnostics
+
+---
+
+## 13. Swagger / OpenAPI
+
+Task 22 adds Swagger/OpenAPI.
+
+Full Docker mode must preserve access to:
+
+    http://localhost:8081/swagger-ui/index.html
+
+and:
+
+    http://localhost:8081/v3/api-docs
+
+Do not duplicate or redesign Swagger configuration.
+
+Do not expose Swagger through nginx unless doing so comes naturally from the chosen proxy configuration.
+
+Direct backend access is sufficient.
+
+---
+
+## 14. Authentication and sessionStorage
+
+The frontend now stores JWT in:
+
+    sessionStorage
+
+Do not change this.
+
+Verify authentication in Docker mode:
+
+    Register/Login
+        ↓
+    JWT stored in sessionStorage
+        ↓
+    REST Authorization header
+        ↓
+    STOMP authentication
+        ↓
+    workspace selection
+
+Opening different browser tabs may have independent authentication state according to the existing sessionStorage behavior.
+
+Do not change authentication semantics.
+
+---
+
+## 15. Workspace flow
+
+The clean Docker startup must support the actual current workspace flow.
+
+Expected user flow:
+
+    http://localhost:4201
+        ↓
+    /auth
+        ↓
+    Register
+        ↓
+    /workspaces
+        ↓
+    initially empty workspace list on fresh DB
+        ↓
+    Create Workspace
+        ↓
+    Open Workspace
+        ↓
+    /workspaces/{workspaceId}/map
+        ↓
+    create/edit Areas
+
+Do not reintroduce:
+
+    PROTOTYPE_WORKSPACE_ID
+
+or automatic prototype workspace creation just to simplify Docker startup.
+
+---
+
+## 16. Health checks and startup ordering
+
+Inspect existing Actuator configuration.
+
+Backend health may use:
+
+    /actuator/health
+
+Add a simple backend healthcheck if useful.
+
+Do not over-engineer startup dependencies.
+
+Required ordering is primarily:
+
+    postgres healthy
+        ↓
+    backend
+
+Redis health dependency may also be used if backend genuinely requires Redis at startup.
+
+Frontend/nginx does not need to wait for the entire application to become healthy unless technically required.
+
+---
+
+## 17. Clean-start acceptance test
+
+This is one of the main acceptance criteria.
+
+Run:
+
+    docker compose down -v
+
+Then:
+
+    docker compose up --build
+
+No manual database setup is allowed between these commands.
+
+Verify:
+
+    PostgreSQL initialized
+        ↓
+    Flyway migrations succeed
+        ↓
+    backend starts
+        ↓
+    frontend starts
+        ↓
+    http://localhost:4201 works
+
+Then manually or programmatically verify:
+
+    Register
+        ↓
+    Workspace list
+        ↓
+    Create Workspace
+        ↓
+    Open Workspace
+        ↓
+    Map
+        ↓
+    Create Area
+
+Also verify direct refresh of:
+
+    /workspaces/{workspaceId}/map
+
+does not return nginx 404.
+
+---
+
+## 18. Infrastructure-only acceptance test
+
+After stopping the full application, verify:
+
+    docker compose up -d postgres redis
+
+Then:
+
+    docker compose ps
+
+must show only infrastructure services running:
+
+    postgres
+    redis
+
+It must NOT automatically start:
+
+    backend
+    frontend
+
+Then verify the existing host workflow still works:
+
+    cd backend
+    ./mvnw spring-boot:run -Dspring-boot.run.profiles=dev
+
+and:
+
+    cd frontend
+    npm start
+
+This is important: Docker packaging must not damage the preferred development workflow.
+
+---
+
+## 19. Apple Silicon compatibility
+
+The developer machine may be Apple Silicon / arm64.
+
+The current PostGIS setup has previously produced a warning similar to:
+
+    requested image's platform (linux/amd64)
+    does not match the detected host platform (linux/arm64/v8)
+
+Inspect the architecture support of all selected images.
+
+Prefer multi-architecture base images for:
+
+- Java
+- Node
+- nginx
+- Redis
+
+Do NOT blindly add:
+
+    platform: linux/amd64
+
+to every service.
+
+If the existing PostGIS image still requires/emulates amd64 on Apple Silicon but works correctly, document that as a known local-development limitation.
+
+Do not replace the existing working PostGIS version solely to remove a harmless warning unless compatibility is verified.
+
+---
+
+## 20. Configuration and secrets
+
+Do not commit real production secrets.
+
+For local Docker, reuse the existing development credentials or clearly defined local-only defaults.
+
+Use environment variables in Compose where appropriate.
+
+Do not add:
+
+- Azure Key Vault
+- production TLS certificates
+- external secret managers
+- cloud-specific configuration
+
+Azure deployment is a separate future task.
+
+---
+
+## 21. Documentation
+
+Update README.md with two clearly separated startup modes.
+
+### Quick Start / Full Docker
+
+This should be the simplest project startup path:
+
+    docker compose up --build
+
+Then:
+
+    http://localhost:4201
+
+Explain that only Docker is required for this mode.
+
+Include shutdown:
+
+    docker compose down
+
+And full clean reset:
+
+    docker compose down -v
+
+Explicitly warn:
+
+    -v deletes the local PostgreSQL data volume.
+
+### Active Development
+
+Infrastructure only:
+
+    docker compose up -d postgres redis
+
+Then backend:
+
+    cd backend
+    ./mvnw spring-boot:run -Dspring-boot.run.profiles=dev
+
+Frontend:
+
+    cd frontend
+    npm start
+
+Explain that this mode is recommended during development because it preserves:
+
+- IDE debugging
+- backend restart speed
+- Angular hot reload
+
+### Swagger
+
+Retain the documented Swagger URL for both relevant workflows.
+
+Update docs/DESIGN.md only where useful to describe the local deployment topology.
+
+Do not create another large Docker-specific design document unless genuinely necessary.
+
+---
+
+## 22. Scope constraints
+
+Do NOT:
+
+- use Docker Compose profiles
+- create duplicate Compose files without a demonstrated need
+- require Dockerized backend/frontend for active development
+- change REST API contracts
+- rename REST endpoints
+- change authentication behavior
+- change sessionStorage behavior
+- change Workspace behavior
+- change Area behavior
+- change OCC
+- change Presence semantics
+- change WebSocket semantics
+- implement multi-instance realtime
+- implement Redis Pub/Sub
+- implement Kubernetes
+- implement Helm
+- implement Azure deployment
+- implement Terraform
+- add CI/CD
+- add production TLS
+- add external services
+- perform unrelated refactoring
+
+This task is about reproducible packaging and startup, not architecture redesign.
+
+---
+
+## 23. Verification
+
+After implementation, provide a final report containing:
+
+1. Exact files created.
+2. Exact files modified.
+3. Final docker-compose service structure.
+4. Docker/base images used.
+5. Backend container configuration.
+6. Frontend/nginx configuration.
+7. REST proxy strategy.
+8. WebSocket proxy strategy.
+
+Confirm explicitly that:
+
+    docker compose up --build
+
+starts:
+
+    postgres
+    redis
+    backend
+    frontend
+
+Confirm explicitly that:
+
+    docker compose up -d postgres redis
+
+starts ONLY:
+
+    postgres
+    redis
+
+Run and report the clean-start test:
+
+    docker compose down -v
+    docker compose up --build
+
+Confirm:
+
+- PostgreSQL becomes healthy
+- Flyway initializes an empty DB
+- backend becomes healthy
+- frontend is reachable on localhost:4201
+- registration works
+- workspace creation works
+- workspace map opens
+- Area creation works
+- Angular route refresh works
+- REST communication works
+- WebSocket/STOMP works
+- Presence works
+- reconnect still works
+- Swagger remains reachable
+
+Then verify host development still works with:
+
+    docker compose up -d postgres redis
+
+plus locally running backend/frontend.
+
+Finally:
+
+- run the complete backend test suite
+- report exact tests/failures/errors/skipped
+- run the frontend production build
+- report result
+- report any Apple Silicon platform warning
+- report every deviation from this approved scope
+
+Do not perform unrelated cleanup.
+
+
+
+
+---
+Task 23 — Final Report
+
+Files Created
+
+┌────────────────────────┬─────────────────────────────────────────────────────────────────────────────────────────────┐
+│          File          │                                         Description                                         │
+├────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────┤
+│ backend/Dockerfile     │ Multi-stage build: eclipse-temurin:21-jdk build stage, eclipse-temurin:21-jre runtime stage │
+├────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────┤
+│ backend/.dockerignore  │ Excludes target/, .git/, .idea/, *.iml, README.md                                           │
+├────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────┤
+│ frontend/Dockerfile    │ Multi-stage build: node:22-alpine build stage, nginx:alpine runtime stage                   │
+├────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────┤
+│ frontend/nginx.conf    │ REST proxy (/api/ → backend), WebSocket proxy (/ws), SPA try_files fallback                 │
+├────────────────────────┼─────────────────────────────────────────────────────────────────────────────────────────────┤
+│ frontend/.dockerignore │ Excludes node_modules/, dist/, .angular/, .git/, .idea/, *.log                              │
+└────────────────────────┴─────────────────────────────────────────────────────────────────────────────────────────────┘
+
+Files Modified
+
+┌───────────────────────────────────────────────┬───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│                     File                      │                                                                          Change                                                                           │
+├───────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ docker-compose.yml                            │ Added backend and frontend services                                                                                                                       │
+├───────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ frontend/src/environments/environment.prod.ts │ apiUrl: '' → '/api'; wsUrl remains '' (derived at runtime)                                                                                                │
+├───────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ frontend/src/app/realtime/realtime.service.ts │ Derive brokerURL from window.location when wsUrl is empty                                                                                                 │
+├───────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ README.md                                     │ New Quick Start and Active Development sections; updated architecture diagrams, Features table, Infrastructure table, Project Structure, Known            │
+│                                               │ Limitations                                                                                                                                               │
+├───────────────────────────────────────────────┼───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┤
+│ docs/DESIGN.md                                │ Added local deployment topology prototype note                                                                                                            │
+└───────────────────────────────────────────────┴───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘
+
+Docker Compose Service Structure
+
+postgres   — postgis/postgis:16-3.4 (amd64, emulated on Apple Silicon)
+redis      — redis:7-alpine (multi-arch)
+backend    — eclipse-temurin:21-jre (multi-arch), port 8081
+frontend   — nginx:alpine (multi-arch), port 4201
+
+REST Proxy Strategy
+
+nginx receives all browser traffic on port 4201. Requests to /api/* are forwarded to http://backend:8081/ with the /api/ prefix stripped (matching what the Angular dev proxy does in development). The Angular production build uses apiUrl: '/api' which is identical to the development environment — no code path differs between the two modes.
+
+WebSocket Proxy Strategy
+
+nginx proxies /ws to http://backend:8081/ws with proxy_http_version 1.1, Upgrade, and Connection: upgrade headers. In the production build, wsUrl is empty and realtime.service.ts derives the URL from window.location.host, producing ws://localhost:4201/ws when served by nginx and ws://localhost:8081/ws when served by the Angular dev server (override via environment.ts).
+
+Confirmations
+
+docker compose up --build starts: postgres, redis, backend, frontend. ✓
+
+docker compose up -d postgres redis starts ONLY postgres and redis — backend and frontend are not started because they are not referenced. ✓
+
+Backend test suite: 163 tests, 0 failures, 0 errors, 0 skipped. ✓
+
+Angular production build: succeeded (2 pre-existing CommonJS warnings from leaflet-draw and @stomp/stompjs — unchanged from before this task). ✓
+
+Apple Silicon: postgis/postgis:16-3.4 is amd64-only and runs under Rosetta 2 emulation on arm64. All other images (eclipse-temurin:21, node:22-alpine, nginx:alpine, redis:7-alpine) are multi-arch. This is an existing condition documented in Known Limitations.
+
+Swagger: accessible at http://localhost:8081/swagger-ui/index.html in both modes. The backend port is always exposed directly; nginx does not proxy Swagger.
+
+JWT secret: SPRING_PROFILES_ACTIVE=dev causes application-dev.yml to supply app.auth.jwt-secret directly, overriding the ${JWT_SECRET} placeholder in application.yml. No JWT_SECRET environment variable is needed in Docker.

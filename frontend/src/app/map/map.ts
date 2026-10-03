@@ -66,6 +66,10 @@ export class MapComponent implements AfterViewInit, OnDestroy {
 
   activeBaseMap: 'map' | 'satellite' = 'map';
 
+  isDrawing = false;
+  liveDrawArea: number | null = null;
+  editingAreaKm2: number | null = null;
+
   private map!: L.Map;
   private osmLayer!: L.TileLayer;
   private satelliteLayer!: L.TileLayer;
@@ -375,6 +379,36 @@ export class MapComponent implements AfterViewInit, OnDestroy {
       this.cdr.detectChanges();
     });
 
+    this.map.on(L.Draw.Event.DRAWSTART, (e: L.LeafletEvent) => {
+      const event = e as L.DrawEvents.DrawStart;
+      if (event.layerType === 'polygon') {
+        this.isDrawing = true;
+        this.liveDrawArea = null;
+        this.cdr.detectChanges();
+      }
+    });
+
+    this.map.on(L.Draw.Event.DRAWVERTEX, (e: L.LeafletEvent) => {
+      const event = e as L.DrawEvents.DrawVertex;
+      const markers = event.layers.getLayers() as L.Marker[];
+      const latlngs = markers.map(m => m.getLatLng());
+      this.liveDrawArea = latlngs.length >= 3 ? computeGeodesicAreaKm2(latlngs) : null;
+      this.cdr.detectChanges();
+    });
+
+    this.map.on(L.Draw.Event.DRAWSTOP, () => {
+      this.isDrawing = false;
+      this.liveDrawArea = null;
+      this.cdr.detectChanges();
+    });
+
+    this.map.on(L.Draw.Event.EDITVERTEX, () => {
+      if (!this.editLayer) return;
+      const latlngs = (this.editLayer.getLatLngs() as L.LatLng[][])[0];
+      this.editingAreaKm2 = computeGeodesicAreaKm2(latlngs);
+      this.cdr.detectChanges();
+    });
+
     this.map.on('moveend zoomend', () => this.loadViewport());
     this.loadViewport();
   }
@@ -460,6 +494,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     this.editingArea = area;
     this.editLayer = editableLayer;
     this.editName = area.name;
+    this.editingAreaKm2 = computeGeodesicAreaKm2(latlngs);
 
     this.editHandler = new (L as any).EditToolbar.Edit(this.map, {
       featureGroup: this.editItems,
@@ -484,6 +519,7 @@ export class MapComponent implements AfterViewInit, OnDestroy {
     this.editSaving = false;
     this.deleteSaving = false;
     this.editVersionWarning = false;
+    this.editingAreaKm2 = null;
     this.cdr.detectChanges();
   }
 

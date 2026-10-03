@@ -2273,6 +2273,169 @@ Unless stated otherwise:
 
 ---
 
+### TC-UI-AREA-CALC-001 — Live area indicator appears once the third vertex is placed
+
+**Type:** UI
+**Priority:** Medium
+
+**Preconditions:**
+- Application is open and map is interactive.
+- No polygon is being drawn.
+
+**Steps:**
+1. Click the polygon draw tool in the Leaflet Draw toolbar.
+2. Click two points on the map.
+3. Observe the map.
+4. Click a third point.
+5. Observe the map.
+
+**Expected Result:**
+- After step 3: no live area indicator is visible.
+- After step 5: a live area indicator appears showing "Area: X.XXX km²" (0 to 3 decimal places).
+
+---
+
+### TC-UI-AREA-CALC-002 — Live area indicator updates as additional vertices are added
+
+**Type:** UI
+**Priority:** Medium
+
+**Preconditions:**
+- TC-UI-AREA-CALC-001 conditions: three vertices have been placed and the indicator is visible.
+
+**Steps:**
+1. Click a fourth point that visibly enlarges or changes the polygon shape.
+2. Observe the indicator value.
+3. Click a fifth point.
+4. Observe the indicator value again.
+
+**Expected Result:**
+- The indicator value changes with each new vertex.
+- The value is always a non-negative number formatted as 0–3 decimal places followed by " km²".
+
+---
+
+### TC-UI-AREA-CALC-003 — Live area indicator disappears when drawing is cancelled
+
+**Type:** UI
+**Priority:** Medium
+
+**Preconditions:**
+- A polygon is being drawn and the live area indicator is visible (≥3 vertices placed).
+
+**Steps:**
+1. Press Escape or click the cancel control to stop drawing without completing the polygon.
+2. Observe the map.
+
+**Expected Result:**
+- The live area indicator is no longer visible.
+- No "New Area" panel appears.
+
+---
+
+### TC-UI-AREA-CALC-004 — Live area indicator disappears and "New Area" panel appears after polygon completion
+
+**Type:** UI
+**Priority:** Medium
+
+**Preconditions:**
+- A polygon is being drawn and the live area indicator is visible (≥3 vertices placed).
+
+**Steps:**
+1. Double-click or click the first vertex to close and complete the polygon.
+2. Observe the map.
+
+**Expected Result:**
+- The live area indicator is no longer visible.
+- The "New Area" panel appears showing the final area value in the panel preview.
+
+---
+
+### TC-UI-AREA-CALC-005 — Live area value is a reasonable approximation
+
+**Type:** UI
+**Priority:** Low
+
+**Preconditions:**
+- A polygon with a known approximate area (e.g., a square of known dimensions) is drawn.
+
+**Steps:**
+1. Draw a polygon approximating a known shape.
+2. Note the live area value shown during drawing.
+3. Complete the polygon and note the value in the "New Area" panel.
+4. Save the area and compare `areaKm2` in the map popup against the live value.
+
+**Expected Result:**
+- The live value shown during drawing is close to the saved `areaKm2`.
+- Small differences are expected: the frontend uses a spherical approximation while the
+  backend calculates on the WGS-84 spheroid. These differences are informational; the
+  saved `areaKm2` from the backend is authoritative.
+
+---
+
+### TC-UI-AREA-EDIT-001 — Edit panel shows live area during editing
+
+**Type:** UI
+**Priority:** Medium
+
+**Preconditions:**
+- At least one Area exists.
+
+**Steps:**
+1. Click an Area polygon to open its popup.
+2. Click "Edit" in the popup.
+3. Observe the Edit Area panel.
+4. Drag a vertex to reshape the polygon.
+5. Observe the Edit Area panel.
+
+**Expected Result:**
+- When the Edit panel opens, an area value is displayed alongside the version number
+  (e.g., "v1 · 0.245 km²").
+- After dragging a vertex (step 4), the displayed area value updates to reflect the
+  new shape.
+- The area value is always 0–3 decimal places followed by " km²".
+- The value need not exactly match the stored `areaKm2`; small differences between the
+  spherical frontend approximation and the persisted spheroidal value are acceptable.
+
+---
+
+### TC-UI-AREA-EDIT-002 — Edit panel area value updates on each vertex drag
+
+**Type:** UI
+**Priority:** Low
+
+**Preconditions:**
+- An Area is open in the Edit panel and a vertex has been dragged once.
+
+**Steps:**
+1. Drag the same or a different vertex to a clearly different position.
+2. Observe the area value in the Edit panel.
+
+**Expected Result:**
+- The area value changes after each vertex drag, reflecting the updated polygon shape.
+
+---
+
+### TC-UI-AREA-EDIT-003 — Cancelling an edit does not leave a stale area value
+
+**Type:** UI
+**Priority:** Low
+
+**Preconditions:**
+- An Area is open in the Edit panel. A vertex has been dragged so the displayed area
+  differs from the original.
+
+**Steps:**
+1. Click "Cancel" in the Edit panel.
+2. Immediately open the same Area for editing again.
+3. Observe the area value in the Edit panel.
+
+**Expected Result:**
+- The Edit panel does not show a value from the previous editing session.
+- The value shown corresponds to the Area's current persisted geometry.
+
+---
+
 ## 6. Discrepancies and Observations
 
 The following items describe gaps between the current prototype and the
@@ -2296,12 +2459,13 @@ return `"details": {}`. TC-AREA-012 does not assert on `details` content for
 non-conflict errors; this remains the expected behaviour until further error
 types are extended.
 
-**Discrepancy 3 — Client-side area preview appears after polygon completion,
-not during drawing.**
+**Discrepancy 3 — Resolved.**
 The design (Functional Requirements §3) states: "While drawing, the user
-sees the current area." The prototype displays the area only after the
-polygon is completed (TC-UI-002 step 5). This is a known prototype
-limitation; live preview during vertex placement is not yet implemented.
+sees the current area." Live area preview during vertex placement is now
+implemented. A floating indicator appears once the third vertex is placed and
+updates as further vertices are added (TC-UI-AREA-CALC-001 through -005).
+The edit panel also shows a live area value that updates on vertex drag
+(TC-UI-AREA-EDIT-001 through -003).
 
 **Discrepancy 4 — Deleted Area exclusion from viewport (resolved).**
 The `DELETE` endpoint is now implemented. TC-DELETE-010 provides black-box API
@@ -2338,18 +2502,20 @@ an unclosed ring returns `400 INVALID_GEOMETRY`.
 | 5 | TC-UPDATE-004 | OCC: version conflict returns structured 409 — core concurrency contract |
 | 6 | TC-UI-002 | Full draw-and-save browser workflow |
 | 7 | TC-UI-003 | Area visible after browser refresh — end-to-end persistence |
-| 8 | TC-UI-UPDATE-001 | Full edit-and-save browser workflow |
-| 9 | TC-UI-UPDATE-002 | Edited Area visible after browser refresh |
-| 10 | TC-DELETE-001 | Delete golden path: validates status, version, response contract |
-| 11 | TC-DELETE-010 | Deleted Area excluded from viewport — spatial query regression |
-| 12 | TC-RESTORE-001 | Restore golden path: DELETED Area returns to ACTIVE |
-| 13 | TC-RESTORE-008 | Restore historical version of ACTIVE Area — validates full restore semantics |
-| 14 | TC-HISTORY-001 | History list golden path: versions ordered DESC |
-| 15 | TC-HISTORY-008 | Restore from history: new RESTORED version created; history unchanged |
-| 16 | TC-UI-HISTORY-001 | Open History panel and view version list |
-| 17 | TC-UI-HISTORY-003 | Restore from History panel updates the map |
-| 18 | TC-WS-002 | AREA_CREATED event: connection and delivery golden path |
-| 19 | TC-UI-WS-001 | Created Area appears in another browser without refresh |
+| 8 | TC-UI-AREA-CALC-001 | Live area indicator appears at 3rd vertex — design requirement |
+| 9 | TC-UI-AREA-EDIT-001 | Edit panel shows live area and updates on drag |
+| 10 | TC-UI-UPDATE-001 | Full edit-and-save browser workflow |
+| 11 | TC-UI-UPDATE-002 | Edited Area visible after browser refresh |
+| 12 | TC-DELETE-001 | Delete golden path: validates status, version, response contract |
+| 13 | TC-DELETE-010 | Deleted Area excluded from viewport — spatial query regression |
+| 14 | TC-RESTORE-001 | Restore golden path: DELETED Area returns to ACTIVE |
+| 15 | TC-RESTORE-008 | Restore historical version of ACTIVE Area — validates full restore semantics |
+| 16 | TC-HISTORY-001 | History list golden path: versions ordered DESC |
+| 17 | TC-HISTORY-008 | Restore from history: new RESTORED version created; history unchanged |
+| 18 | TC-UI-HISTORY-001 | Open History panel and view version list |
+| 19 | TC-UI-HISTORY-003 | Restore from History panel updates the map |
+| 20 | TC-WS-002 | AREA_CREATED event: connection and delivery golden path |
+| 21 | TC-UI-WS-001 | Created Area appears in another browser without refresh |
 
 **Phase 2 — Validation and isolation**
 

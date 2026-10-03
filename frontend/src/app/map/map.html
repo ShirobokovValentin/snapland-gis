@@ -16,6 +16,12 @@
 
   <button class="logout-btn" (click)="logout()">Sign out</button>
 
+  @if (isDrawing && liveDrawArea !== null) {
+    <div class="drawing-area-indicator">
+      Area: {{ liveDrawArea | number: '1.0-3' }} km²
+    </div>
+  }
+
   @if (pendingLayer) {
     <div class="area-panel">
       <div class="area-panel-title">New Area</div>
@@ -44,7 +50,12 @@
   @if (editingArea) {
     <div class="area-panel">
       <div class="area-panel-title">Edit Area</div>
-      <div class="area-preview">v{{ editingArea.currentVersion }}</div>
+      <div class="area-preview">
+        v{{ editingArea.currentVersion }}
+        @if (editingAreaKm2 !== null) {
+          · {{ editingAreaKm2 | number: '1.0-3' }} km²
+        }
+      </div>
       @if (editVersionWarning) {
         <div class="edit-warning">A newer version was saved by another user.</div>
       }

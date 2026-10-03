@@ -279,6 +279,29 @@ If a test exposes a real defect, fix the defect rather than changing the test ex
 
 ---
 
+## README Maintenance
+
+`README.md` is the primary entry point for project reviewers. It must always describe the current repository state — not planned or future state.
+
+For every task, check whether the change affects `README.md`. Update it in the same task when the change affects any of:
+
+- implemented features or their status;
+- setup or run instructions;
+- configuration properties or environment variables;
+- architecture or component interactions;
+- API behavior or endpoints;
+- authentication or security;
+- map providers;
+- test count or test class coverage;
+- known limitations;
+- performance or scaling decisions.
+
+Do not mechanically update README for every code change. Only update sections where the content would be factually incorrect without the change.
+
+Do not describe planned or future functionality as implemented.
+
+---
+
 ## Documentation
 
 Update documentation when implementation changes:

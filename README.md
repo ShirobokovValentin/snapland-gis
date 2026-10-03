@@ -1,93 +1,354 @@
 # Snapland GIS
 
-A collaborative GIS application where multiple users can draw and analyse areas on a map in real-time.
+A collaborative GIS application where multiple users can draw, edit, and analyse land areas on a shared map in real time.
 
-## Prerequisites
+This repository is a take-home assignment implementing a simplified, prototype-grade version of the described system. It demonstrates the core data model, spatial operations, real-time collaboration mechanics, and an authentication skeleton.
 
-- Docker and Docker Compose
-- Java 21
-- Maven (or use the included `./mvnw` wrapper)
-- Node.js ≥ 20.19.0 (v26+ recommended) and npm
+---
+
+## Features
+
+| Feature | Status |
+|---------|--------|
+| Draw and view polygon areas on a map | Implemented |
+| Create, update, and delete areas with OCC | Implemented |
+| Full version history with point-in-time snapshots | Implemented |
+| Restore a previous version | Implemented |
+| Real-time area events over WebSocket (STOMP) | Implemented |
+| WebSocket JWT authentication | Implemented |
+| Prototype registration and login (email only, no password) | Implemented — prototype |
+| Geometry validation (simple, non-self-intersecting polygons) | Implemented |
+| Area size calculation (km²) | Implemented — PostGIS (authoritative); live frontend preview while drawing and editing |
+| Viewport bounding-box spatial querying (PostGIS / GiST) | Implemented |
+| Map / satellite layer switching (OSM ↔ satellite) | Implemented |
+| Satellite tile layer | Implemented — Esri World Imagery (temporary; see [Map Providers](#map-providers)) |
+| Workspace membership authorization | Not implemented — known limitation |
+| Password-based authentication | Not implemented — prototype only |
+| GovMap integration | Not implemented — see [Map Providers](#map-providers) |
+| Frontend tests | Not implemented |
+
+---
+
+## Technology Stack
+
+### Backend
+
+| | |
+|--|--|
+| Language | Java 21 |
+| Framework | Spring Boot 3.5.3 |
+| Build | Maven (wrapper included: `./mvnw`) |
+| Database | PostgreSQL 16 + PostGIS 3.4 |
+| Schema migrations | Flyway |
+| ORM | Spring Data JPA / Hibernate |
+| Security | Spring Security, OAuth2 Resource Server (JWT / HMAC-SHA256) |
+| WebSocket | Spring WebSocket, STOMP |
+| Spatial library | JTS Topology Suite 1.20.0 |
+
+### Frontend
+
+| | |
+|--|--|
+| Framework | Angular 22 |
+| Language | TypeScript |
+| Map | Leaflet.js 1.9.4 |
+| Real-time | @stomp/stompjs 7.0.0 |
+
+### Infrastructure
+
+| | |
+|--|--|
+| Database | `postgis/postgis:16-3.4` (Docker) |
+| Cache / Pub/Sub | Redis 7-alpine (Docker — not yet wired to the application) |
+
+---
 
 ## Architecture Overview
 
-See `docs/DESIGN.md` for the full system design.
+```mermaid
+graph TD
+    Browser["Browser\n(Angular 22 + Leaflet)"]
+    Backend["Backend\n(Spring Boot 3.5.3  :8081)"]
+    PG["PostgreSQL 16 + PostGIS 3.4\n(:5433)"]
+    Redis["Redis 7\n(:6379)\nnot wired yet"]
 
-| Component | Technology |
-|-----------|-----------|
-| Backend | Java 21, Spring Boot 3.5.3, Maven |
-| Frontend | Angular 22, TypeScript, Leaflet.js |
-| Database | PostgreSQL 16 + PostGIS 3.4 |
-| Messaging | Redis 7 |
+    Browser -->|"REST /api/*\n(dev proxy → :8081)"| Backend
+    Browser -->|"STOMP ws://localhost:8081/ws"| Backend
+    Backend -->|"JPA / SQL"| PG
+    Backend -.->|"future Pub/Sub"| Redis
+```
 
-## 1. Start Infrastructure
+The backend exposes:
+- A REST API under `/workspaces/{workspaceId}/areas` for area CRUD and version history.
+- A WebSocket endpoint at `/ws` (STOMP protocol) for real-time area events.
+- Authentication endpoints at `/auth/register` and `/auth/login`.
+
+The Angular frontend proxies REST calls through the Angular dev server (`/api` → `http://localhost:8081`) and connects to the WebSocket URL directly.
+
+---
+
+## Core Data Model
+
+```
+workspace
+  └── workspace_member  (user ↔ workspace, role)
+        └── users
+
+area  (belongs to workspace)
+  ├── geometry      POLYGON, SRID 4326
+  ├── area_km2      NUMERIC  (computed by PostGIS on write)
+  ├── status        ACTIVE | DELETED
+  └── current_version  → area_version.version
+
+area_version  (append-only log)
+  ├── version       INTEGER (monotonically increasing per area)
+  ├── change_type   CREATED | UPDATED | DELETED | RESTORED
+  └── snapshot of name / geometry / area_km2 / status at that version
+```
+
+**Concurrency model**: Optimistic Concurrency Control (OCC). Every mutating request carries `expectedVersion`; the backend rejects with `409 VERSION_CONFLICT` if `current_version ≠ expectedVersion`.
+
+**Spatial index**: Partial GiST index on `area.geometry WHERE status = 'ACTIVE'` for efficient spatial queries over non-deleted areas.
+
+---
+
+## Authentication
+
+The prototype uses email-only authentication — no passwords. Any email registers a new account; submitting an existing email on the login screen returns a fresh JWT. Email ownership is not verified: anyone who knows a registered email can authenticate as that user.
+
+| Endpoint | Method | Auth required | Description |
+|----------|--------|:---:|-------------|
+| `/auth/register` | POST | No | Create account, return JWT |
+| `/auth/login` | POST | No | Return JWT for existing email |
+| `/dev/token` | POST | No | **Dev profile only** — token for the seeded dev user |
+
+JWT tokens are signed with HMAC-SHA256. The `sub` claim holds the user UUID. Tokens expire after 24 hours (configurable via `app.auth.jwt-expiration`).
+
+WebSocket connections authenticate via a `Authorization: Bearer <token>` header in the STOMP `CONNECT` frame. Browser WebSocket clients cannot set HTTP headers during the HTTP upgrade, so authentication happens at the STOMP layer.
+
+---
+
+## Real-Time Collaboration
+
+Area mutations publish events over STOMP to a per-workspace topic: `/topic/workspace/{workspaceId}`.
+
+Event types: `AREA_CREATED`, `AREA_UPDATED`, `AREA_DELETED`, `AREA_RESTORED`.
+
+Example payload:
+
+```json
+{
+  "type": "AREA_UPDATED",
+  "workspaceId": "00000000-0000-0000-0000-000000000002",
+  "timestamp": "2026-10-02T12:34:56.789Z",
+  "payload": {
+    "id": "...",
+    "name": "...",
+    "currentVersion": 3,
+    "status": "ACTIVE",
+    "geometry": { "type": "Polygon", "coordinates": [...] },
+    "areaKm2": 30.7
+  }
+}
+```
+
+Events are broadcast only after the database transaction commits. If the transaction rolls back (OCC conflict, invalid geometry), no event is published.
+
+**Current limitation**: The in-process Spring `SimpleBroker` broadcasts only to subscribers connected to the same JVM instance. Multi-instance scaling requires Redis Pub/Sub fan-out, which is modelled in the design but not yet implemented.
+
+---
+
+## Version History
+
+Every area mutation appends a snapshot row to `area_version`. Version numbers are monotonically increasing per area. History is never deleted.
+
+Restoring a version creates a new `area_version` entry with `change_type = RESTORED`, copying the snapshot from the target version.
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/workspaces/{wid}/areas/{aid}/versions` | All versions, newest first |
+| `POST` | `/workspaces/{wid}/areas/{aid}/versions/{v}/restore` | Restore to version `v` |
+
+---
+
+## Map Providers
+
+The map displays a satellite base layer. The original requirement specifies GovMap (Israel Mapping Center) as the satellite imagery source.
+
+The official public GovMap WMS endpoint is CORS-enabled, but the layers it exposes are cadastral and vector data; no aerial or orthophoto layer is available through that endpoint. No other documented official WMS, WMTS, or XYZ tile endpoint for GovMap aerial imagery could be verified for third-party use. Esri World Imagery is therefore used as a temporary prototype provider.
+
+See [`docs/research/GOVMAP_SATELLITE_RESEARCH.md`](docs/research/GOVMAP_SATELLITE_RESEARCH.md) and [`docs/research/GOVMAP_XYZ_ORTHOPHOTO_FINDINGS.md`](docs/research/GOVMAP_XYZ_ORTHOPHOTO_FINDINGS.md) for the full investigation.
+
+Replacing the tile provider requires updating the tile URL configuration in the map component — the component treats the tile URL as a configuration value.
+
+---
+
+## API Overview
+
+All area and version endpoints require a valid JWT in the `Authorization: Bearer <token>` header.
+
+### Areas
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/workspaces/{wid}/areas` | Create area |
+| `GET` | `/workspaces/{wid}/areas?bbox={minLon,minLat,maxLon,maxLat}` | Spatial viewport query — active areas intersecting the bounding box |
+| `GET` | `/workspaces/{wid}/areas/{aid}` | Get single area |
+| `PUT` | `/workspaces/{wid}/areas/{aid}` | Update area (name and/or geometry) |
+| `DELETE` | `/workspaces/{wid}/areas/{aid}?expectedVersion={n}` | Soft-delete area |
+
+### Version History
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/workspaces/{wid}/areas/{aid}/versions` | Full version log |
+| `POST` | `/workspaces/{wid}/areas/{aid}/versions/{v}/restore` | Restore to version `v` |
+
+### Authentication
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `POST` | `/auth/register` | Register new user — returns JWT |
+| `POST` | `/auth/login` | Login existing user — returns JWT |
+
+### Observability
+
+| Method | Path | Description |
+|--------|------|-------------|
+| `GET` | `/actuator/health` | Liveness / readiness |
+
+There is no OpenAPI / Swagger UI.
+
+---
+
+## Running Locally
+
+### Prerequisites
+
+| Tool | Version |
+|------|---------|
+| Docker + Docker Compose | Any recent |
+| Java | 21 |
+| Maven | Use `./mvnw` wrapper (no separate install needed) |
+| Node.js | ≥ 20.19.0 |
+| npm | Bundled with Node.js |
+
+### Step 1 — Start infrastructure
 
 ```bash
 docker compose up -d
 ```
 
-Wait for both services to be healthy:
+Wait until postgres is healthy:
 
 ```bash
 docker compose ps
 ```
 
-The `postgres` and `redis` containers must show `(healthy)` before starting the backend.
+The `postgres` container must reach `(healthy)` before the backend can connect. Redis starts alongside postgres but is not used by the application in the current implementation.
 
-## 2. Start the Backend
+### Step 2 — Start the backend
 
-```bash
-cd backend
-./mvnw spring-boot:run
-```
-
-The backend starts on `http://localhost:8080`.
-
-**Health check:**
-
-```bash
-curl http://localhost:8080/actuator/health
-```
-
-Expected response:
-
-```json
-{"status":"UP","components":{"db":{"status":"UP",...},"diskSpace":{"status":"UP",...}}}
-```
-
-**Build and run all tests** (requires infrastructure to be running):
+The `dev` Spring profile supplies all required secrets and seeds the database with a development user and shared workspace. No environment variables are required for local development.
 
 ```bash
 cd backend
-./mvnw clean verify
+./mvnw spring-boot:run -Dspring-boot.run.profiles=dev
 ```
 
-## 3. Start the Frontend
+The backend starts at **http://localhost:8081**.
+
+Health check:
+
+```bash
+curl http://localhost:8081/actuator/health
+```
+
+Expected response: `{"status":"UP",...}`
+
+### Step 3 — Start the frontend
 
 ```bash
 cd frontend
-npm install      # only needed on first run or after dependency changes
-npm start        # starts the dev server at http://localhost:4200
+npm install          # first run, or after dependency changes
+npm start            # Angular dev server at http://localhost:4201
 ```
 
-**Production build:**
+Open **http://localhost:4201** in a browser.
+
+The dev server proxies `/api/*` requests to `http://localhost:8081`. WebSocket connects directly to `ws://localhost:8081/ws`.
+
+### Prototype authentication flow
+
+1. Open http://localhost:4201 — the auth guard redirects unauthenticated users to `/auth`.
+2. Enter any email address and a display name to register.
+3. To log in as an existing user, enter the same email on the login screen.
+4. A JWT is stored in `localStorage` and attached to all subsequent requests.
+
+---
+
+## Configuration
+
+### Local dev — `application-dev.yml`
+
+All values are preset; no `.env` file is needed.
+
+| Property | Value |
+|----------|-------|
+| `app.auth.jwt-secret` | `dev-only-secret-not-for-production-use-aabbccddeeff001122334455` |
+| `app.auth.jwt-expiration` | `PT24H` |
+| `app.auth.jwt-issuer` | `snapland` |
+| `app.dev.user-id` | `00000000-0000-0000-0000-000000000001` |
+| `app.prototype.workspace-id` | `00000000-0000-0000-0000-000000000002` |
+
+### Production — required environment variables
+
+| Variable | Description |
+|----------|-------------|
+| `JWT_SECRET` | HMAC-SHA256 signing key (minimum 32 characters) |
+| `PROTOTYPE_WORKSPACE_ID` | UUID of the shared prototype workspace |
+
+Standard Spring Boot datasource properties (`spring.datasource.*`) override the default connection settings.
+
+---
+
+## Testing
+
+Integration tests use Testcontainers to start a dedicated PostGIS container per test class. No local database is required; Docker must be running.
 
 ```bash
-cd frontend
-npm run build
+cd backend
+./mvnw test
 ```
 
-Output is written to `frontend/dist/frontend/`.
+| Test class | Areas covered |
+|------------|---------------|
+| `AreaApiIntegrationTest` | Create, list, get; geometry validation; workspace scoping |
+| `AreaUpdateIntegrationTest` | Update mutations, OCC, concurrent write contention |
+| `AreaDeleteRestoreIntegrationTest` | Soft-delete, restore, OCC, error cases |
+| `AreaVersionHistoryIntegrationTest` | Version log ordering, snapshots, restore, 404/409 cases |
+| `AreaWebSocketIntegrationTest` | Event publishing for all mutation types; workspace isolation |
+| `AreaWebSocketAuthIntegrationTest` | WebSocket JWT acceptance and rejection (expired, wrong key, missing) |
+| `AuthIntegrationTest` | Registration, login, duplicate detection, JWT claims, workspace membership |
+| `SchemaIntegrationTest` | Database schema constraints and PostGIS spatial queries |
+| `SnaplandGisApplicationTests` | Spring context loads |
+
+**95 integration tests, 0 failures** (verified by `./mvnw test`). Frontend tests: not implemented.
+
+---
 
 ## Database
 
-Flyway manages the database schema. Migrations are in `backend/src/main/resources/db/migration/`.
+### Schema
 
-| Migration | Description |
-|-----------|-------------|
-| V1 | Enable PostGIS extension |
+Flyway migrations are applied automatically on startup.
 
-Connection details for local development:
+| Migration | File | Description |
+|-----------|------|-------------|
+| V1 | `V1__enable_postgis.sql` | Enable PostGIS extension |
+| V2 | `V2__core_schema.sql` | All tables: `users`, `workspace`, `workspace_member`, `area`, `area_version`; indexes |
+
+### Local connection
 
 | Property | Value |
 |----------|-------|
@@ -96,10 +357,129 @@ Connection details for local development:
 | Username | `snapland` |
 | Password | `snapland` |
 
+### Performance
+
+A partial GiST spatial index covers `area.geometry WHERE status = 'ACTIVE'`. This supports efficient bounding-box and containment queries against non-deleted areas while keeping deleted rows out of the index.
+
+---
+
+## Security
+
+| Mechanism | Detail |
+|-----------|--------|
+| JWT signing | HMAC-SHA256; 24-hour expiry (configurable) |
+| REST authentication | Spring Security OAuth2 Resource Server validates all requests except `/auth/**` and `/dev/token` |
+| WebSocket authentication | `JwtChannelInterceptor` validates the JWT in the STOMP `CONNECT` frame |
+| Input validation | Bean Validation on all request DTOs; polygon validity enforced via JTS before persistence |
+| 401 handling | Angular interceptor clears the stored token and redirects to `/auth` on any 401 response |
+
+**Known gap**: Workspace membership is not enforced in `AreaService`. Any authenticated user can read or mutate areas in any workspace. This is documented in `docs/DESIGN.md` as a known limitation of the prototype.
+
+---
+
+## Known Limitations
+
+These are deliberate prototype constraints, not defects.
+
+| Limitation | Detail |
+|------------|--------|
+| No password authentication | Any email registers or logs in; suitable only for a closed demo |
+| No workspace authorization | All authenticated users can access all workspaces |
+| Single-instance WebSocket broker | Spring `SimpleBroker` does not fan out across multiple backend instances |
+| Redis not integrated | Redis runs in `docker-compose` but has no application code |
+| Static workspace ID in frontend | `environment.ts` hardcodes `workspaceId` |
+| No OpenAPI documentation | No Swagger UI or OpenAPI spec |
+| No frontend tests | Angular components have no unit or e2e tests |
+| GovMap not integrated | Esri World Imagery used as a temporary tile source |
+| No rate limiting | No throttling on auth or mutation endpoints |
+
+---
+
+## Production / Scaling
+
+The design document (`docs/DESIGN.md`) describes the intended production path. What the current prototype requires before production use:
+
+1. **Strong authentication** — replace email-only login with a credential-backed identity provider or add a password field with bcrypt.
+2. **Workspace authorization** — enforce workspace membership checks in `AreaService`.
+3. **Redis Pub/Sub** — wire `AreaEventRelay` to Redis for multi-instance WebSocket fan-out.
+4. **Rate limiting** — throttle authentication and area mutation endpoints.
+5. **Secret management** — rotate the JWT secret; manage `JWT_SECRET` through a secrets manager (Vault, AWS KMS, etc.).
+6. **TLS** — terminate HTTPS / WSS at a load balancer or reverse proxy.
+
+---
+
+## Project Structure
+
+```
+snapland-gis/
+├── backend/
+│   ├── src/main/java/com/snapland/gis/
+│   │   ├── area/          # Area entity, repository, service, controller, DTOs
+│   │   ├── auth/          # AuthService, AuthController, JwtIssuer, DTOs
+│   │   ├── common/        # Exception hierarchy, GlobalExceptionHandler, ApiError
+│   │   ├── config/        # SecurityConfig, JwtProperties, PrototypeProperties
+│   │   ├── dev/           # DevProperties, DevDataInitializer, DevTokenController
+│   │   ├── realtime/      # WebSocketConfig, JwtChannelInterceptor, AreaEventRelay
+│   │   ├── user/          # User entity, UserRepository
+│   │   └── workspace/     # Workspace, WorkspaceMember entities and repositories
+│   └── src/main/resources/
+│       ├── application.yml
+│       ├── application-dev.yml
+│       └── db/migration/
+├── frontend/
+│   └── src/app/
+│       ├── area/          # AreaService, area model, edit-panel component
+│       ├── auth/          # AuthService, AuthComponent, authGuard, authInterceptor
+│       ├── map/           # MapComponent (Leaflet integration)
+│       └── realtime/      # RealtimeService (STOMP client)
+├── docs/
+│   ├── REQUIREMENTS.md
+│   ├── DESIGN.md
+│   └── TEST_CASES.md
+├── docker-compose.yml
+└── README.md
+```
+
+---
+
 ## Technical Decisions
 
-- **PostgreSQL + PostGIS** as the authoritative spatial store. SRID 4326 (WGS 84) for all geometry.
-- **Flyway** for database migrations. Schema changes are version-controlled and applied automatically on startup.
-- **Redis** for Pub/Sub event distribution and presence state (not a persistent store).
-- **Spring Boot Actuator** exposes `/actuator/health` for liveness/readiness monitoring.
-- **Optimistic Concurrency Control** on Area mutations via `current_version` (see `docs/DESIGN.md`).
+| Decision | Rationale |
+|----------|-----------|
+| PostgreSQL + PostGIS as authoritative spatial store | Full spatial type support, geometry validation, `ST_Area` for km² calculation, GiST spatial indexes |
+| OCC via `current_version` | Avoids long-held locks; conflict detection at the application boundary; version history naturally enforces ordering |
+| Append-only `area_version` log | Immutable change history; enables point-in-time restore without complex undo logic |
+| STOMP over WebSocket | Topic-based subscription model without a broker dependency; `@stomp/stompjs` widely available |
+| JWT in STOMP CONNECT header | Browser WebSocket API cannot set custom HTTP headers on the HTTP upgrade request |
+| Spring Security OAuth2 Resource Server | Standardised JWT validation and principal propagation without a full OAuth2 provider |
+| Email-only prototype auth | Minimises scope; evaluators can register and use the product without password infrastructure |
+| Testcontainers with real PostGIS | Avoids mock/real divergence for spatial queries, geometry constraints, and schema validation |
+| `application-dev.yml` provides all secrets | No `.env` file or manual setup needed for local development |
+
+---
+
+## Future Work
+
+Items designed but not yet implemented:
+
+- Redis Pub/Sub fan-out for horizontal WebSocket scaling
+- Workspace membership authorization
+- Password-based (or OAuth2-backed) authentication
+- Presence indicators (who is currently editing which area)
+- GovMap tile integration (requires a verified, officially documented tile endpoint for aerial imagery)
+- Spatial queries: find areas near a point (proximity / distance search)
+- Role-based access control within workspaces
+- OpenAPI specification and Swagger UI
+- Frontend component tests and e2e tests
+- Production deployment configuration (Docker images, Kubernetes manifests)
+
+---
+
+## Documentation
+
+| Document | Contents |
+|----------|----------|
+| [`docs/REQUIREMENTS.md`](docs/REQUIREMENTS.md) | Functional and non-functional requirements |
+| [`docs/DESIGN.md`](docs/DESIGN.md) | System architecture, data model, API contracts, design decisions |
+| [`docs/TEST_CASES.md`](docs/TEST_CASES.md) | Test case specifications by feature area |
+| [`CLAUDE.md`](CLAUDE.md) | Repository working rules for AI-assisted development |

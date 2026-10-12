@@ -33,15 +33,9 @@ import org.springframework.messaging.support.MessageBuilder;
 import org.springframework.messaging.support.MessageHeaderAccessor;
 import org.springframework.security.oauth2.server.resource.authentication.JwtAuthenticationToken;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import org.springframework.web.socket.messaging.WebSocketStompClient;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.utility.DockerImageName;
 
 import java.lang.reflect.Type;
 import java.net.URI;
@@ -57,23 +51,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@Testcontainers
 @ActiveProfiles("test")
-class AreaWebSocketAuthIntegrationTest {
-
-    @Container
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>(
-            DockerImageName.parse("postgis/postgis:16-3.4").asCompatibleSubstituteFor("postgres"))
-            .withDatabaseName("snapland_gis")
-            .withUsername("snapland")
-            .withPassword("snapland");
-
-    @DynamicPropertySource
-    static void configureDataSource(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", postgres::getJdbcUrl);
-        registry.add("spring.datasource.username", postgres::getUsername);
-        registry.add("spring.datasource.password", postgres::getPassword);
-    }
+class AreaWebSocketAuthIntegrationTest extends IntegrationTestBase {
 
     @LocalServerPort
     private int port;
@@ -159,13 +138,7 @@ class AreaWebSocketAuthIntegrationTest {
         return headers;
     }
 
-    private GeoJsonGeometry squarePolygon() {
-        List<List<Double>> ring = List.of(
-                List.of(35.50, 32.70), List.of(35.55, 32.70),
-                List.of(35.55, 32.75), List.of(35.50, 32.75),
-                List.of(35.50, 32.70));
-        return new GeoJsonGeometry("Polygon", List.of(ring));
-    }
+    private GeoJsonGeometry squarePolygon() { return TestFixtures.squarePolygon(); }
 
     private UUID createArea() {
         var response = restTemplate.exchange(

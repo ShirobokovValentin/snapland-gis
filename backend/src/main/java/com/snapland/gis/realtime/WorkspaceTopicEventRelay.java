@@ -8,13 +8,13 @@ import org.springframework.transaction.event.TransactionPhase;
 import org.springframework.transaction.event.TransactionalEventListener;
 
 @Component
-public class AreaEventRelay {
+public class WorkspaceTopicEventRelay {
 
-    private static final Logger log = LoggerFactory.getLogger(AreaEventRelay.class);
+    private static final Logger log = LoggerFactory.getLogger(WorkspaceTopicEventRelay.class);
 
     private final SimpMessagingTemplate messagingTemplate;
 
-    public AreaEventRelay(SimpMessagingTemplate messagingTemplate) {
+    public WorkspaceTopicEventRelay(SimpMessagingTemplate messagingTemplate) {
         this.messagingTemplate = messagingTemplate;
     }
 
@@ -24,6 +24,16 @@ public class AreaEventRelay {
             messagingTemplate.convertAndSend("/topic/workspace/" + event.workspaceId(), event);
         } catch (Exception e) {
             log.error("Failed to deliver area event {} for workspace {}: {}",
+                    event.type(), event.workspaceId(), e.getMessage(), e);
+        }
+    }
+
+    @TransactionalEventListener(phase = TransactionPhase.AFTER_COMMIT)
+    public void onWorkspaceEvent(WorkspaceEventMessage event) {
+        try {
+            messagingTemplate.convertAndSend("/topic/workspace/" + event.workspaceId(), event);
+        } catch (Exception e) {
+            log.error("Failed to deliver workspace event {} for workspace {}: {}",
                     event.type(), event.workspaceId(), e.getMessage(), e);
         }
     }

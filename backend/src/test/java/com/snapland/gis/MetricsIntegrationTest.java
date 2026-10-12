@@ -31,15 +31,9 @@ import org.springframework.messaging.simp.stomp.StompHeaders;
 import org.springframework.messaging.simp.stomp.StompSession;
 import org.springframework.messaging.simp.stomp.StompSessionHandlerAdapter;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import org.springframework.web.socket.messaging.WebSocketStompClient;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.utility.DockerImageName;
 
 import java.net.URI;
 import java.util.List;
@@ -72,23 +66,8 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  * TC-METRICS-012  Duplicate disconnect event → gauge does not go negative
  */
 @SpringBootTest(webEnvironment = SpringBootTest.WebEnvironment.RANDOM_PORT)
-@Testcontainers
 @ActiveProfiles("test")
-class MetricsIntegrationTest {
-
-    @Container
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>(
-            DockerImageName.parse("postgis/postgis:16-3.4").asCompatibleSubstituteFor("postgres"))
-            .withDatabaseName("snapland_gis")
-            .withUsername("snapland")
-            .withPassword("snapland");
-
-    @DynamicPropertySource
-    static void configureDataSource(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", postgres::getJdbcUrl);
-        registry.add("spring.datasource.username", postgres::getUsername);
-        registry.add("spring.datasource.password", postgres::getPassword);
-    }
+class MetricsIntegrationTest extends IntegrationTestBase {
 
     @LocalServerPort
     private int port;
@@ -158,28 +137,9 @@ class MetricsIntegrationTest {
         return headers;
     }
 
-    private GeoJsonGeometry squarePolygon() {
-        List<List<Double>> ring = List.of(
-                List.of(35.50, 32.70), List.of(35.55, 32.70),
-                List.of(35.55, 32.75), List.of(35.50, 32.75),
-                List.of(35.50, 32.70));
-        return new GeoJsonGeometry("Polygon", List.of(ring));
-    }
-
-    private GeoJsonGeometry altPolygon() {
-        List<List<Double>> ring = List.of(
-                List.of(35.60, 32.80), List.of(35.65, 32.80),
-                List.of(35.65, 32.85), List.of(35.60, 32.85),
-                List.of(35.60, 32.80));
-        return new GeoJsonGeometry("Polygon", List.of(ring));
-    }
-
-    private GeoJsonGeometry selfIntersectingPolygon() {
-        List<List<Double>> ring = List.of(
-                List.of(0.0, 0.0), List.of(2.0, 2.0), List.of(2.0, 0.0),
-                List.of(0.0, 2.0), List.of(0.0, 0.0));
-        return new GeoJsonGeometry("Polygon", List.of(ring));
-    }
+    private GeoJsonGeometry squarePolygon() { return TestFixtures.squarePolygon(); }
+    private GeoJsonGeometry altPolygon() { return TestFixtures.altPolygon(); }
+    private GeoJsonGeometry selfIntersectingPolygon() { return TestFixtures.selfIntersectingPolygon(); }
 
     private String areasUrl() {
         return "/workspaces/" + workspaceId + "/areas";

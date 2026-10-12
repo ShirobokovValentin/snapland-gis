@@ -31,15 +31,9 @@ import org.springframework.messaging.simp.stomp.StompHeaders;
 import org.springframework.messaging.simp.stomp.StompSession;
 import org.springframework.messaging.simp.stomp.StompSessionHandlerAdapter;
 import org.springframework.test.context.ActiveProfiles;
-import org.springframework.test.context.DynamicPropertyRegistry;
-import org.springframework.test.context.DynamicPropertySource;
 import org.springframework.web.socket.WebSocketHttpHeaders;
 import org.springframework.web.socket.client.standard.StandardWebSocketClient;
 import org.springframework.web.socket.messaging.WebSocketStompClient;
-import org.testcontainers.containers.PostgreSQLContainer;
-import org.testcontainers.junit.jupiter.Container;
-import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.utility.DockerImageName;
 
 import java.lang.reflect.Type;
 import java.net.URI;
@@ -61,23 +55,8 @@ import static org.assertj.core.api.Assertions.assertThat;
                 "app.rate-limit.drawing-actions.max-actions=3",
                 "app.rate-limit.drawing-actions.window=PT1M"
         })
-@Testcontainers
 @ActiveProfiles("test")
-class DrawingRateLimitIntegrationTest {
-
-    @Container
-    static PostgreSQLContainer<?> postgres = new PostgreSQLContainer<>(
-            DockerImageName.parse("postgis/postgis:16-3.4").asCompatibleSubstituteFor("postgres"))
-            .withDatabaseName("snapland_gis")
-            .withUsername("snapland")
-            .withPassword("snapland");
-
-    @DynamicPropertySource
-    static void configureDataSource(DynamicPropertyRegistry registry) {
-        registry.add("spring.datasource.url", postgres::getJdbcUrl);
-        registry.add("spring.datasource.username", postgres::getUsername);
-        registry.add("spring.datasource.password", postgres::getPassword);
-    }
+class DrawingRateLimitIntegrationTest extends IntegrationTestBase {
 
     // Shared controllable clock — reset to a fixed point in @BeforeEach
     static final TestClock TEST_CLOCK = new TestClock(Instant.parse("2024-01-01T12:00:00Z"));
@@ -154,13 +133,7 @@ class DrawingRateLimitIntegrationTest {
         return headers;
     }
 
-    private GeoJsonGeometry squarePolygon() {
-        List<List<Double>> ring = List.of(
-                List.of(35.50, 32.70), List.of(35.55, 32.70),
-                List.of(35.55, 32.75), List.of(35.50, 32.75),
-                List.of(35.50, 32.70));
-        return new GeoJsonGeometry("Polygon", List.of(ring));
-    }
+    private GeoJsonGeometry squarePolygon() { return TestFixtures.squarePolygon(); }
 
     private GeoJsonGeometry bowtiePolgyon() {
         List<List<Double>> ring = List.of(
